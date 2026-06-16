@@ -1,13 +1,9 @@
 import {
-  IconArrowBackUp,
-  IconArrowForwardUp,
   IconChevronDown,
   IconDownload,
   IconFileImport,
-  IconHelpCircle,
   IconLayoutSidebar,
   IconMap,
-  IconMap2,
   IconMountain,
   IconMinus,
   IconPlayerPauseFilled,
@@ -16,7 +12,6 @@ import {
   IconPlayerSkipForward,
   IconPlus,
   IconRulerMeasure,
-  IconSettings,
   IconTargetArrow,
   IconCheck,
   IconX,
@@ -48,6 +43,12 @@ import {
 } from './lib/track.js';
 
 const colors = ['#1c7f48', '#f97316', '#1f8edb', '#d33b5f', '#7c3aed'];
+const colorModes = [
+  { value: 'Time', label: '时间' },
+  { value: 'Speed', label: '速度' },
+  { value: 'Elevation', label: '海拔' },
+  { value: 'Slope', label: '坡度' },
+];
 
 function buildDemoTracks() {
   return demoTracks.map((track) => makeTrackDocument(track));
@@ -61,13 +62,14 @@ export default function App() {
   const [activeId, setActiveId] = useState('trans-eurasia');
   const [basemapId, setBasemapId] = useState('terrain');
   const [basemapOpen, setBasemapOpen] = useState(true);
+  const [logTrayOpen, setLogTrayOpen] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [colorMode, setColorMode] = useState('Time');
   const [isPlaying, setIsPlaying] = useState(false);
   const [scrub, setScrub] = useState(52);
   const [measureMode, setMeasureMode] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [status, setStatus] = useState('Local parser ready');
+  const [status, setStatus] = useState('本地解析器就绪');
   const [cursor, setCursor] = useState({ lat: 39.7749, lon: 19.7002, ele: 242 });
   const [offlineReady, setOfflineReady] = useState(true);
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -180,7 +182,7 @@ export default function App() {
       (bbox, point) => bbox.extend([point.lon, point.lat]),
       new maplibregl.LngLatBounds([activeTrack.points[0].lon, activeTrack.points[0].lat], [activeTrack.points[0].lon, activeTrack.points[0].lat]),
     );
-    map.fitBounds(bounds, { padding: { top: 120, right: 380, bottom: 330, left: 300 }, duration: 900, maxZoom: 6 });
+    map.fitBounds(bounds, { padding: { top: 110, right: 360, bottom: 270, left: 260 }, duration: 900, maxZoom: 6 });
   }, [activeTrack]);
 
   useEffect(() => {
@@ -218,7 +220,7 @@ export default function App() {
     map.setStyle(makeRasterStyle(basemap));
     map.once('style.load', () => {
       addRouteToMap();
-      setStatus(basemap.needsKey ? 'Tianditu token missing; previewing global fallback' : `${basemap.name} basemap active`);
+      setStatus(basemap.needsKey ? '缺少天地图 Token，正在使用全球底图预览' : `已启用${basemap.name}`);
     });
   }, [basemapId]);
 
@@ -237,7 +239,7 @@ export default function App() {
   async function importFiles(fileList) {
     const files = Array.from(fileList ?? []);
     if (!files.length) return;
-    setStatus(`Parsing ${files.length} local file${files.length > 1 ? 's' : ''}`);
+    setStatus(`正在解析 ${files.length} 个本地文件`);
     const parsedTracks = [];
     for (const [index, file] of files.entries()) {
       try {
@@ -245,25 +247,25 @@ export default function App() {
         parsed.color = colors[(tracks.length + index) % colors.length];
         parsedTracks.push(parsed);
       } catch (error) {
-        setStatus(`Could not parse ${file.name}: ${error.message}`);
+        setStatus(`无法解析 ${file.name}: ${error.message}`);
       }
     }
     if (parsedTracks.length) {
       setTracks((current) => [...parsedTracks, ...current]);
       setActiveId(parsedTracks[0].id);
-      setStatus(`${parsedTracks.length} file${parsedTracks.length > 1 ? 's' : ''} imported locally`);
+      setStatus(`已本地导入 ${parsedTracks.length} 个文件`);
     }
   }
 
   function handlePasteImport() {
     if (!pasteText.trim()) return;
-    const parsed = parseText(pasteText, 'Pasted log.txt', new Blob([pasteText]).size);
+    const parsed = parseText(pasteText, '粘贴日志.txt', new Blob([pasteText]).size);
     parsed.color = colors[tracks.length % colors.length];
     setTracks((current) => [parsed, ...current]);
     setActiveId(parsed.id);
     setPasteText('');
     setPasteOpen(false);
-    setStatus('Pasted log imported locally');
+    setStatus('粘贴日志已本地导入');
   }
 
   function downloadTrack(format) {
@@ -289,7 +291,20 @@ export default function App() {
   function clearDemoTracks() {
     setTracks([]);
     setActiveId(null);
-    setStatus('New map ready');
+    setStatus('新地图已就绪');
+  }
+
+  function selectBrowseMode() {
+    setMeasureMode(false);
+    setStatus('已切换为选择浏览模式');
+  }
+
+  function toggleMeasureMode() {
+    setMeasureMode((value) => {
+      const next = !value;
+      setStatus(next ? '测距模式已开启' : '测距模式已关闭');
+      return next;
+    });
   }
 
   return (
@@ -299,36 +314,34 @@ export default function App() {
           <IconMountain size={28} stroke={1.8} />
           <span>Atlas Canvas</span>
         </div>
-        <button className="icon-button" aria-label="Toggle file rail">
+        <button
+          className={`icon-button ${logTrayOpen ? 'is-active' : ''}`}
+          aria-label="切换文件栏"
+          onClick={() => setLogTrayOpen((value) => !value)}
+        >
           <IconLayoutSidebar size={20} />
         </button>
         <button className="command" onClick={() => fileInputRef.current?.click()}>
           <IconFileImport size={18} />
-          Import Log
+          导入日志
         </button>
         <button className="command" onClick={clearDemoTracks}>
           <IconMap size={18} />
-          New Map
+          新地图
         </button>
         <div className="topbar-spacer" />
-        <button className="icon-button" aria-label="Undo">
-          <IconArrowBackUp size={19} />
-        </button>
-        <button className="icon-button" aria-label="Redo">
-          <IconArrowForwardUp size={19} />
-        </button>
-        <button className={`command ${measureMode ? 'is-active' : ''}`} onClick={() => setMeasureMode((value) => !value)}>
+        <button className={`command ${measureMode ? 'is-active' : ''}`} onClick={toggleMeasureMode}>
           <IconRulerMeasure size={18} />
-          Measure
+          测距
         </button>
         <button className="command" onClick={fitRoute}>
           <IconZoomScan size={18} />
-          Fit to Route
+          适配轨迹
         </button>
         <div className="export-menu">
           <button className="command" onClick={() => setExportOpen((value) => !value)}>
             <IconDownload size={18} />
-            Export
+            导出
             <IconChevronDown size={16} />
           </button>
           {exportOpen && (
@@ -341,34 +354,30 @@ export default function App() {
             </div>
           )}
         </div>
-        <button className="icon-button" aria-label="Help">
-          <IconHelpCircle size={20} />
-        </button>
       </header>
 
       <section className="map-stage">
         <div ref={mapNode} className={`map-root ${measureMode ? 'is-measuring' : ''}`} />
 
-        <nav className="tool-rail" aria-label="Map tools">
-          {[
-            ['Select', IconTargetArrow, true],
-            ['Draw', IconMap2],
-            ['Measure', IconRulerMeasure, measureMode],
-            ['Waypoints', IconMap],
-            ['Layers', IconLayoutSidebar],
-            ['Settings', IconSettings],
-          ].map(([label, Icon, active]) => (
-            <button key={label} className={active ? 'active' : ''} title={label}>
-              <Icon size={20} />
-              <span>{label}</span>
-            </button>
-          ))}
+        <nav className="tool-rail" aria-label="地图工具">
+          <button className={!measureMode ? 'active' : ''} title="选择" onClick={selectBrowseMode}>
+            <IconTargetArrow size={20} />
+            <span>选择</span>
+          </button>
+          <button className={measureMode ? 'active' : ''} title="测距" onClick={toggleMeasureMode}>
+            <IconRulerMeasure size={20} />
+            <span>测距</span>
+          </button>
+          <button className={basemapOpen ? 'active' : ''} title="图层" onClick={() => setBasemapOpen((value) => !value)}>
+            <IconLayoutSidebar size={20} />
+            <span>图层</span>
+          </button>
         </nav>
 
         <aside className={`basemap-panel ${basemapOpen ? 'open' : ''}`}>
           <div className="panel-title">
-            <span>Basemap</span>
-            <button aria-label="Close basemap panel" onClick={() => setBasemapOpen(false)}>
+            <span>底图</span>
+            <button aria-label="关闭底图面板" onClick={() => setBasemapOpen(false)}>
               <IconX size={18} />
             </button>
           </div>
@@ -385,33 +394,33 @@ export default function App() {
             ))}
           </div>
           <label className="switch-line">
-            <span>Offline-ready</span>
+            <span>离线就绪</span>
             <input type="checkbox" checked={offlineReady} onChange={(event) => setOfflineReady(event.target.checked)} />
           </label>
         </aside>
 
         {!basemapOpen && (
           <button className="floating-basemap" onClick={() => setBasemapOpen(true)}>
-            <IconMap2 size={18} />
-            Basemap
+            <IconLayoutSidebar size={18} />
+            底图
           </button>
         )}
 
         <div className="coord-card">
-          <span>Lat&nbsp; {cursor.lat.toFixed(4)}°</span>
-          <span>Lon&nbsp; {cursor.lon.toFixed(4)}°</span>
-          <span>Elev&nbsp; {Math.round(cursor.ele ?? 0)} m</span>
+          <span>纬度&nbsp; {cursor.lat.toFixed(4)}°</span>
+          <span>经度&nbsp; {cursor.lon.toFixed(4)}°</span>
+          <span>海拔&nbsp; {Math.round(cursor.ele ?? 0)} m</span>
         </div>
 
         <div className="zoom-stack">
-          <button onClick={() => mapRef.current?.zoomIn()} aria-label="Zoom in"><IconPlus size={18} /></button>
-          <button onClick={() => mapRef.current?.zoomOut()} aria-label="Zoom out"><IconMinus size={18} /></button>
+          <button onClick={() => mapRef.current?.zoomIn()} aria-label="放大"><IconPlus size={18} /></button>
+          <button onClick={() => mapRef.current?.zoomOut()} aria-label="缩小"><IconMinus size={18} /></button>
         </div>
 
-        <section className="log-tray">
+        <section className={`log-tray ${logTrayOpen ? '' : 'is-hidden'}`}>
           <div className="tray-header">
-            <strong>Log Files</strong>
-            <span>{tracks.length} active</span>
+            <strong>日志文件</strong>
+            <span>{tracks.length} 个启用</span>
           </div>
           <div
             className={`drop-zone ${dragging ? 'dragging' : ''}`}
@@ -426,14 +435,14 @@ export default function App() {
               importFiles(event.dataTransfer.files);
             }}
           >
-            <span>Drop files here</span>
+            <span>拖放文件到这里</span>
             <button onClick={() => fileInputRef.current?.click()}>
               <IconFileImport size={16} />
-              Import Log
+              导入日志
             </button>
             <small>GPX, KML, CSV, TXT, NMEA</small>
             <button className="text-button" onClick={() => setPasteOpen(true)}>
-              Paste log text
+              粘贴日志文本
             </button>
           </div>
           <div className="track-list">
@@ -444,39 +453,39 @@ export default function App() {
                 <span>
                   <strong>{track.name}</strong>
                   <small>
-                    {track.stats.points.toLocaleString()} points · {track.size}
+                    {track.stats.points.toLocaleString()} 点 · {track.size}
                   </small>
                 </span>
               </button>
             ))}
           </div>
-          <button className="clear-button" onClick={clearDemoTracks}>Clear All</button>
+          <button className="clear-button" onClick={clearDemoTracks}>全部清除</button>
         </section>
 
-        <section className="analytics">
+        <section className={`analytics ${logTrayOpen ? '' : 'full-width'}`}>
           <div className="metric-strip">
-            <Metric label="Distance" value={`${Math.round(activeTrack?.stats.distanceKm ?? 0).toLocaleString()} km`} />
-            <Metric label="Duration" value={formatDuration(activeTrack?.stats.durationHours ?? 0)} />
-            <Metric label="Moving Speed" value={`${(activeTrack?.stats.movingSpeedKmh ?? 0).toFixed(1)} km/h`} />
-            <Metric label="Ascent" value={`${Math.round(activeTrack?.stats.ascentM ?? 0).toLocaleString()} m`} />
-            <Metric label="Descent" value={`${Math.round(activeTrack?.stats.descentM ?? 0).toLocaleString()} m`} />
-            <Metric label="Points" value={(activeTrack?.stats.points ?? 0).toLocaleString()} />
+            <Metric label="距离" value={`${Math.round(activeTrack?.stats.distanceKm ?? 0).toLocaleString()} km`} />
+            <Metric label="时长" value={formatDuration(activeTrack?.stats.durationHours ?? 0)} />
+            <Metric label="移动速度" value={`${(activeTrack?.stats.movingSpeedKmh ?? 0).toFixed(1)} km/h`} />
+            <Metric label="累计爬升" value={`${Math.round(activeTrack?.stats.ascentM ?? 0).toLocaleString()} m`} />
+            <Metric label="累计下降" value={`${Math.round(activeTrack?.stats.descentM ?? 0).toLocaleString()} m`} />
+            <Metric label="轨迹点" value={(activeTrack?.stats.points ?? 0).toLocaleString()} />
           </div>
           <div className="playback">
             <button onClick={() => setIsPlaying((value) => !value)}>{isPlaying ? <IconPlayerPauseFilled size={18} /> : <IconPlayerPlayFilled size={18} />}</button>
             <button onClick={() => setScrub(0)}><IconPlayerSkipBack size={18} /></button>
             <button onClick={() => setScrub(100)}><IconPlayerSkipForward size={18} /></button>
             <select value={colorMode} onChange={(event) => setColorMode(event.target.value)}>
-              {['Time', 'Speed', 'Elevation', 'Slope'].map((mode) => <option key={mode}>{mode}</option>)}
+              {colorModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
             </select>
-            <input aria-label="Route timeline" type="range" min="0" max="100" value={scrub} onChange={(event) => setScrub(Number(event.target.value))} />
-            <span>{Math.round(scrub)}% · color by {colorMode}</span>
+            <input aria-label="轨迹时间轴" type="range" min="0" max="100" value={scrub} onChange={(event) => setScrub(Number(event.target.value))} />
+            <span>{Math.round(scrub)}% · 按{colorModes.find((mode) => mode.value === colorMode)?.label ?? colorMode}着色</span>
           </div>
           <div className="profile-chart">
             <div className="chart-legend">
-              <span className="elevation">Elevation (m)</span>
-              <span className="speed">Speed (km/h)</span>
-              <span className="slope">Slope (%)</span>
+              <span className="elevation">海拔 (m)</span>
+              <span className="speed">速度 (km/h)</span>
+              <span className="slope">坡度 (%)</span>
             </div>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ top: 8, right: 16, left: 18, bottom: 8 }}>
@@ -497,7 +506,7 @@ export default function App() {
         <footer className="statusbar">
           <span>WGS 84 / Pseudo-Mercator</span>
           <span>{status}</span>
-          <span>Zoom: {mapRef.current?.getZoom?.().toFixed(1) ?? '2.2'}</span>
+          <span>缩放: {mapRef.current?.getZoom?.().toFixed(1) ?? '2.2'}</span>
         </footer>
       </section>
 
@@ -505,13 +514,13 @@ export default function App() {
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <div className="paste-modal">
             <div className="panel-title">
-              <span>Paste Log Text</span>
-              <button onClick={() => setPasteOpen(false)} aria-label="Close paste modal"><IconX size={18} /></button>
+              <span>粘贴日志文本</span>
+              <button onClick={() => setPasteOpen(false)} aria-label="关闭粘贴弹窗"><IconX size={18} /></button>
             </div>
-            <textarea value={pasteText} onChange={(event) => setPasteText(event.target.value)} placeholder="Paste CSV, GPX, KML, or NMEA text here..." />
+            <textarea value={pasteText} onChange={(event) => setPasteText(event.target.value)} placeholder="在这里粘贴 CSV、GPX、KML 或 NMEA 文本..." />
             <div className="modal-actions">
-              <button className="secondary" onClick={() => setPasteOpen(false)}>Cancel</button>
-              <button onClick={handlePasteImport}>Import locally</button>
+              <button className="secondary" onClick={() => setPasteOpen(false)}>取消</button>
+              <button onClick={handlePasteImport}>本地导入</button>
             </div>
           </div>
         </div>

@@ -103,7 +103,7 @@ export async function parseFile(file) {
   return parseText(text, file.name, file.size);
 }
 
-export function parseText(text, name = 'Pasted log', byteSize = 0) {
+export function parseText(text, name = '粘贴日志', byteSize = 0) {
   const lower = name.toLowerCase();
   if (lower.endsWith('.gpx') || text.trim().startsWith('<gpx')) {
     return fromGeoJson(gpx(new DOMParser().parseFromString(text, 'application/xml')), name, byteSize);
@@ -212,16 +212,16 @@ export function toCsv(track) {
 }
 
 export function formatDuration(hours) {
-  if (!hours) return '0h';
+  if (!hours) return '0时';
   const days = Math.floor(hours / 24);
   const rest = hours - days * 24;
   const wholeHours = Math.floor(rest);
   const minutes = Math.round((rest - wholeHours) * 60);
-  return days ? `${days}d ${wholeHours}h ${minutes}m` : `${wholeHours}h ${minutes}m`;
+  return days ? `${days}天 ${wholeHours}时 ${minutes}分` : `${wholeHours}时 ${minutes}分`;
 }
 
 export function formatBytes(bytes) {
-  if (!bytes) return 'local';
+  if (!bytes) return '本地';
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -277,11 +277,11 @@ function average(values) {
 
 function qualityFlags(points, speeds) {
   const flags = [];
-  if (!points.some((point) => point.time)) flags.push('Missing time');
-  if (!points.some((point) => point.ele != null)) flags.push('No elevation');
-  if (speeds.some((speed) => speed > 220)) flags.push('Speed spike');
-  if (points.length < 2) flags.push('Too few points');
-  return flags.length ? flags : ['Clean track'];
+  if (!points.some((point) => point.time)) flags.push('缺少时间');
+  if (!points.some((point) => point.ele != null)) flags.push('缺少海拔');
+  if (speeds.some((speed) => speed > 220)) flags.push('速度异常');
+  if (points.length < 2) flags.push('轨迹点过少');
+  return flags.length ? flags : ['轨迹正常'];
 }
 
 function escapeXml(value) {

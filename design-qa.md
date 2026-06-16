@@ -12,14 +12,14 @@
 - Mobile viewport evidence: `C:\Users\Admin\Documents\GPS log visual\output\playwright\polish-after-mobile.png`
 - Full-view comparison evidence: `C:\Users\Admin\Documents\GPS log visual\output\playwright\design-comparison.png`
 - Viewport: `1440 x 1024`
-- State: desktop app, default Terrain basemap, demo TransEurasia track active, basemap drawer open.
+- State: desktop app, default 地形 basemap, demo TransEurasia track active, basemap drawer open, Simplified Chinese UI.
 - Fonts and typography: passed. IBM Plex Sans and IBM Plex Mono provide a precise product/GIS feel; hierarchy, wrapping, and small labels remain readable.
-- Spacing and layout rhythm: passed. Top command bar, left tool rail, right basemap drawer, lower file tray, metric strip, playback row, and profile panel match the selected Atlas Canvas structure. A second polish pass aligned icon boxes, fixed the tool rail overflow, separated the coordinate card from the analytics panel, and tightened mobile metrics spacing.
+- Spacing and layout rhythm: passed. Top command bar, simplified left tool rail, right basemap drawer, lower file tray, metric strip, playback row, and profile panel match the selected Atlas Canvas structure. The analytics panel was reduced in height to expose more map area, the coordinate card and zoom stack were repositioned above it, and mobile metrics spacing avoids overlap.
 - Colors and visual tokens: passed. Light neutral panels, jade green primary controls, blue/green/orange route and chart colors, and subtle borders match the source direction.
 - Image quality and asset fidelity: passed. Map is a real MapLibre raster map, not a placeholder; icons are from Tabler Icons; no custom inline SVG/image stand-ins were used for visible icon assets.
-- Copy and content: passed. Import, basemap, measure, fit, export, local file tray, format labels, metrics, and coordinate/status copy match the intended product workflow.
+- Copy and content: passed. Visible product UI is now Simplified Chinese, while technical format names such as GPX, KML, CSV, NMEA, WGS 84, and Pseudo-Mercator remain unchanged.
 - Focused region comparison evidence: the full-view comparison is sufficient because the target is a single desktop map workbench and all important controls are visible at the captured size.
-- Patches made since previous QA pass: switched default basemap back to Terrain, replaced unreliable terrain tiles with Esri World Topo, increased route and chart line visibility, verified pasted CSV import updates the track list and metrics, replaced text glyph controls with icon-library controls, tightened the file tray, added visible focus states, and added mobile-specific panel layout to avoid overlap.
+- Patches made since previous QA pass: removed inactive left-rail tools, kept only Select/Measure/Layers as real controls, localized visible UI to Simplified Chinese, reduced the bottom analytics footprint, repositioned map overlays, and removed obsolete before/after temporary screenshots.
 
 **Follow-up Polish**
 - P3: Add optional high-density sample data so the default demo profile looks closer to the generated mock.
