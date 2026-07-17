@@ -6,6 +6,8 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  /* Only named panels participate in view transitions. */
+  view-transition-name: none;
   --surface: rgba(255, 255, 255, 0.92);
   --surface-strong: #ffffff;
   --line: rgba(22, 36, 31, 0.12);
@@ -17,6 +19,12 @@
   --orange: #f97316;
   --text-muted: #61706a;
   --shadow: 0 14px 34px rgba(23, 34, 30, 0.12);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --duration-fast: 160ms;
+  --duration-popover: 180ms;
+  --duration-panel: 200ms;
+  --duration-layout: 240ms;
 }
 
 * {
@@ -42,6 +50,34 @@ button {
   border: 0;
   color: inherit;
   cursor: pointer;
+}
+
+:where(
+  .command,
+  .icon-button,
+  .tool-rail button,
+  .floating-basemap,
+  .panel-title button,
+  .zoom-stack button,
+  .playback button,
+  .drop-zone button:not(.text-button),
+  .modal-actions button
+) {
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+:where(
+  .command,
+  .icon-button,
+  .tool-rail button,
+  .floating-basemap,
+  .panel-title button,
+  .zoom-stack button,
+  .playback button,
+  .drop-zone button:not(.text-button),
+  .modal-actions button
+):active {
+  transform: scale(0.97);
 }
 
 svg {
@@ -112,7 +148,10 @@ textarea:focus-visible {
   font-size: 14px;
   font-weight: 500;
   line-height: 1;
-  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+  transition:
+    background var(--duration-fast) ease,
+    border-color var(--duration-fast) ease,
+    transform var(--duration-fast) var(--ease-out);
 }
 
 .command {
@@ -124,12 +163,20 @@ textarea:focus-visible {
   width: 36px;
 }
 
-.command:hover,
-.icon-button:hover,
-.export-menu > .command:hover {
-  background: #ffffff;
-  border-color: var(--line-strong);
-  transform: translateY(-1px);
+@media (hover: hover) and (pointer: fine) {
+  .command:hover,
+  .icon-button:hover,
+  .export-menu > .command:hover {
+    background: #ffffff;
+    border-color: var(--line-strong);
+    transform: translateY(-1px);
+  }
+
+  .command:hover:active,
+  .icon-button:hover:active,
+  .export-menu > .command:hover:active {
+    transform: scale(0.97);
+  }
 }
 
 .command.is-active {
@@ -156,6 +203,26 @@ textarea:focus-visible {
   border-radius: 8px;
   background: var(--surface-strong);
   box-shadow: var(--shadow);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px) scale(0.97);
+  transform-origin: top right;
+  transition:
+    opacity var(--duration-popover) var(--ease-out),
+    transform var(--duration-popover) var(--ease-out),
+    visibility 0s linear var(--duration-popover);
+}
+
+.menu-popover.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--duration-popover) var(--ease-out),
+    transform var(--duration-popover) var(--ease-out),
+    visibility 0s;
 }
 
 .menu-popover button {
@@ -242,7 +309,9 @@ textarea:focus-visible {
   opacity: 0;
   pointer-events: none;
   transform: translateX(12px);
-  transition: opacity 180ms ease, transform 180ms ease;
+  transition:
+    opacity var(--duration-panel) var(--ease-out),
+    transform var(--duration-panel) var(--ease-out);
   backdrop-filter: blur(14px);
 }
 
@@ -369,7 +438,7 @@ textarea:focus-visible {
   height: 16px;
   border-radius: 50%;
   background: white;
-  transition: transform 160ms ease;
+  transition: transform var(--duration-fast) var(--ease-in-out);
 }
 
 .switch-line input:checked {
@@ -453,10 +522,25 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  view-transition-name: log-tray;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity var(--duration-panel) var(--ease-out),
+    transform var(--duration-panel) var(--ease-out),
+    visibility 0s;
 }
 
 .log-tray.is-hidden {
-  display: none;
+  display: flex;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(-8px);
+  transition:
+    opacity var(--duration-panel) var(--ease-out),
+    transform var(--duration-panel) var(--ease-out),
+    visibility 0s linear var(--duration-panel);
 }
 
 .tray-header {
@@ -559,6 +643,17 @@ textarea:focus-visible {
   display: grid;
   grid-template-rows: 58px 40px 1fr;
   overflow: hidden;
+  view-transition-name: analytics-panel;
+}
+
+::view-transition-group(analytics-panel) {
+  animation-duration: var(--duration-layout);
+  animation-timing-function: var(--ease-in-out);
+}
+
+::view-transition-group(log-tray) {
+  animation-duration: var(--duration-panel);
+  animation-timing-function: var(--ease-out);
 }
 
 .analytics.full-width {
@@ -695,6 +790,21 @@ textarea:focus-visible {
   display: grid;
   place-items: center;
   background: rgba(15, 25, 21, 0.22);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 220ms var(--ease-out),
+    visibility 0s linear 220ms;
+}
+
+.modal-backdrop.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity 220ms var(--ease-out),
+    visibility 0s;
 }
 
 .paste-modal {
@@ -704,6 +814,14 @@ textarea:focus-visible {
   border-radius: 8px;
   background: white;
   box-shadow: 0 24px 80px rgba(15, 25, 21, 0.28);
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+}
+
+.modal-backdrop.is-open .paste-modal {
+  opacity: 1;
+  transform: translateY(0) scale(1);
 }
 
 .paste-modal textarea {
@@ -836,7 +954,8 @@ textarea:focus-visible {
     display: none;
   }
 
-  .log-tray {
+  .log-tray,
+  .log-tray.is-hidden {
     display: none;
   }
 
@@ -887,5 +1006,112 @@ textarea:focus-visible {
     gap: 8px;
     padding: 0 12px;
     font-size: 12px;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .basemap-panel,
+  .basemap-panel.open {
+    transform: none;
+  }
+
+  .basemap-panel {
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .command,
+  .icon-button,
+  .export-menu > .command {
+    transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
+  }
+
+  .command:hover,
+  .icon-button:hover,
+  .export-menu > .command:hover {
+    transform: none;
+  }
+
+  :where(
+    .command,
+    .icon-button,
+    .tool-rail button,
+    .floating-basemap,
+    .panel-title button,
+    .zoom-stack button,
+    .playback button,
+    .drop-zone button:not(.text-button),
+    .modal-actions button
+  ),
+  :where(
+    .command,
+    .icon-button,
+    .tool-rail button,
+    .floating-basemap,
+    .panel-title button,
+    .zoom-stack button,
+    .playback button,
+    .drop-zone button:not(.text-button),
+    .modal-actions button
+  ):active {
+    transform: none;
+  }
+
+  .command:hover:active,
+  .icon-button:hover:active,
+  .export-menu > .command:hover:active {
+    transform: none;
+  }
+
+  .modal-backdrop {
+    transition:
+      opacity var(--duration-fast) var(--ease-out),
+      visibility 0s linear var(--duration-fast);
+  }
+
+  .modal-backdrop.is-open {
+    transition:
+      opacity var(--duration-fast) var(--ease-out),
+      visibility 0s;
+  }
+
+  .paste-modal,
+  .modal-backdrop.is-open .paste-modal {
+    transform: none;
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .menu-popover,
+  .menu-popover.is-open {
+    transform: none;
+  }
+
+  .menu-popover {
+    transition:
+      opacity var(--duration-fast) var(--ease-out),
+      visibility 0s linear var(--duration-fast);
+  }
+
+  .menu-popover.is-open {
+    transition:
+      opacity var(--duration-fast) var(--ease-out),
+      visibility 0s;
+  }
+
+  .log-tray,
+  .log-tray.is-hidden {
+    transform: none;
+  }
+
+  .log-tray {
+    transition:
+      opacity var(--duration-fast) var(--ease-out),
+      visibility 0s;
+  }
+
+  .log-tray.is-hidden {
+    transition:
+      opacity var(--duration-fast) var(--ease-out),
+      visibility 0s linear var(--duration-fast);
   }
 }

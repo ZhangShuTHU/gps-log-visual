@@ -33,6 +33,7 @@ import { basemaps, makeRasterStyle } from './lib/basemaps.js';
 import { demoTracks } from './data/demoTracks.js';
 import {
   formatDuration,
+  interpolateTrackPoint,
   makeTrackDocument,
   parseFile,
   parseText,
@@ -50,8 +51,26 @@ const colorModes = [
   { value: 'Slope', label: '坡度' },
 ];
 
+const PLAYBACK_STEP_MS = 260;
+const PLAYBACK_STATE_INTERVAL_MS = 100;
+
 function buildDemoTracks() {
   return demoTracks.map((track) => makeTrackDocument(track));
+}
+
+function makeCursorFeatureCollection(point) {
+  return {
+    type: 'FeatureCollection',
+    features: point
+      ? [
+          {
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [point.lon, point.lat] },
+            properties: {},
+          },
+        ]
+      : [],
+  };
 }
 
 export default function App() {
@@ -74,6 +93,9 @@ export default function App() {
   const [offlineReady, setOfflineReady] = useState(true);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
+  const scrubRef = useRef(scrub);
+  const rangeInputRef = useRef(null);
+  const playbackFrameRef = useRef(null);
 
   const activeTrack = tracks.find((track) => track.id === activeId) ?? tracks[0];
   const basemap = basemaps.find((item) => item.id === basemapId) ?? basemaps[0];
@@ -89,7 +111,15 @@ export default function App() {
     }));
   }, [activeTrack]);
 
-  const currentPoint = activeTrack?.points[Math.min(activeTrack.points.length - 1, Math.floor((scrub / 100) * activeTrack.points.length))];
+  const currentPoint = interpolateTrackPoint(activeTrack?.points ?? [], scrub);
+
+  const setScrubValue = useCallback((value) => {
+    const numericValue = Number(value);
+    const nextValue = Math.min(100, Math.max(0, Number.isFinite(numericValue) ? numericValue : 0));
+    scrubRef.current = nextValue;
+    if (rangeInputRef.current) rangeInputRef.current.value = String(nextValue);
+    setScrub(nextValue);
+  }, []);
 
   const addRouteToMap = useCallback(() => {
     const map = mapRef.current;
@@ -97,18 +127,7 @@ export default function App() {
     const sourceId = 'route-source';
     const cursorSourceId = 'cursor-source';
     const route = toGeoJson(activeTrack);
-    const marker = {
-      type: 'FeatureCollection',
-      features: currentPoint
-        ? [
-            {
-              type: 'Feature',
-              geometry: { type: 'Point', coordinates: [currentPoint.lon, currentPoint.lat] },
-              properties: {},
-            },
-          ]
-        : [],
-    };
+    const marker = makeCursorFeatureCollection(currentPoint);
 
     if (map.getSource(sourceId)) {
       map.getSource(sourceId).setData(route);
@@ -229,12 +248,44 @@ export default function App() {
   }, [addRouteToMap, scrub]);
 
   useEffect(() => {
-    if (!isPlaying) return;
-    const timer = window.setInterval(() => {
-      setScrub((value) => (value >= 100 ? 0 : value + 1));
-    }, 260);
-    return () => window.clearInterval(timer);
-  }, [isPlaying]);
+    if (!isPlaying || !activeTrack?.points.length) return;
+
+    let lastFrameTime = null;
+    let lastStateCommitTime = null;
+
+    function advancePlayback(timestamp) {
+      if (lastFrameTime == null) {
+        lastFrameTime = timestamp;
+        lastStateCommitTime = timestamp;
+      } else {
+        const elapsedMs = timestamp - lastFrameTime;
+        lastFrameTime = timestamp;
+        const nextScrub = (scrubRef.current + elapsedMs / PLAYBACK_STEP_MS) % 100;
+        scrubRef.current = nextScrub;
+
+        if (rangeInputRef.current) rangeInputRef.current.value = String(nextScrub);
+
+        const point = interpolateTrackPoint(activeTrack.points, nextScrub);
+        mapRef.current?.getSource('cursor-source')?.setData(makeCursorFeatureCollection(point));
+
+        if (timestamp - lastStateCommitTime >= PLAYBACK_STATE_INTERVAL_MS) {
+          lastStateCommitTime = timestamp;
+          setScrub(nextScrub);
+        }
+      }
+
+      playbackFrameRef.current = window.requestAnimationFrame(advancePlayback);
+    }
+
+    playbackFrameRef.current = window.requestAnimationFrame(advancePlayback);
+    return () => {
+      if (playbackFrameRef.current != null) {
+        window.cancelAnimationFrame(playbackFrameRef.current);
+        playbackFrameRef.current = null;
+      }
+      setScrub(scrubRef.current);
+    };
+  }, [isPlaying, activeTrack]);
 
   async function importFiles(fileList) {
     const files = Array.from(fileList ?? []);
@@ -307,6 +358,18 @@ export default function App() {
     });
   }
 
+  function toggleLogTray() {
+    const update = () => setLogTrayOpen((value) => !value);
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (!reduceMotion && document.startViewTransition) {
+      document.startViewTransition(update);
+      return;
+    }
+
+    update();
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -317,7 +380,7 @@ export default function App() {
         <button
           className={`icon-button ${logTrayOpen ? 'is-active' : ''}`}
           aria-label="切换文件栏"
-          onClick={() => setLogTrayOpen((value) => !value)}
+          onClick={toggleLogTray}
         >
           <IconLayoutSidebar size={20} />
         </button>
@@ -339,20 +402,26 @@ export default function App() {
           适配轨迹
         </button>
         <div className="export-menu">
-          <button className="command" onClick={() => setExportOpen((value) => !value)}>
+          <button
+            className="command"
+            aria-expanded={exportOpen}
+            onClick={() => setExportOpen((value) => !value)}
+          >
             <IconDownload size={18} />
             导出
             <IconChevronDown size={16} />
           </button>
-          {exportOpen && (
-            <div className="menu-popover">
-              {['gpx', 'kml', 'csv', 'png'].map((format) => (
-                <button key={format} onClick={() => downloadTrack(format)}>
-                  {format.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          )}
+          <div
+            className={`menu-popover ${exportOpen ? 'is-open' : ''}`}
+            aria-hidden={!exportOpen}
+            inert={!exportOpen}
+          >
+            {['gpx', 'kml', 'csv', 'png'].map((format) => (
+              <button key={format} onClick={() => downloadTrack(format)}>
+                {format.toUpperCase()}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -473,12 +542,12 @@ export default function App() {
           </div>
           <div className="playback">
             <button onClick={() => setIsPlaying((value) => !value)}>{isPlaying ? <IconPlayerPauseFilled size={18} /> : <IconPlayerPlayFilled size={18} />}</button>
-            <button onClick={() => setScrub(0)}><IconPlayerSkipBack size={18} /></button>
-            <button onClick={() => setScrub(100)}><IconPlayerSkipForward size={18} /></button>
+            <button onClick={() => setScrubValue(0)}><IconPlayerSkipBack size={18} /></button>
+            <button onClick={() => setScrubValue(100)}><IconPlayerSkipForward size={18} /></button>
             <select value={colorMode} onChange={(event) => setColorMode(event.target.value)}>
               {colorModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
             </select>
-            <input aria-label="轨迹时间轴" type="range" min="0" max="100" value={scrub} onChange={(event) => setScrub(Number(event.target.value))} />
+            <input ref={rangeInputRef} aria-label="轨迹时间轴" type="range" min="0" max="100" step="0.01" value={scrub} onChange={(event) => setScrubValue(event.target.value)} />
             <span>{Math.round(scrub)}% · 按{colorModes.find((mode) => mode.value === colorMode)?.label ?? colorMode}着色</span>
           </div>
           <div className="profile-chart">
@@ -510,21 +579,25 @@ export default function App() {
         </footer>
       </section>
 
-      {pasteOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="paste-modal">
-            <div className="panel-title">
-              <span>粘贴日志文本</span>
-              <button onClick={() => setPasteOpen(false)} aria-label="关闭粘贴弹窗"><IconX size={18} /></button>
-            </div>
-            <textarea value={pasteText} onChange={(event) => setPasteText(event.target.value)} placeholder="在这里粘贴 CSV、GPX、KML 或 NMEA 文本..." />
-            <div className="modal-actions">
-              <button className="secondary" onClick={() => setPasteOpen(false)}>取消</button>
-              <button onClick={handlePasteImport}>本地导入</button>
-            </div>
+      <div
+        className={`modal-backdrop ${pasteOpen ? 'is-open' : ''}`}
+        role="dialog"
+        aria-modal={pasteOpen ? 'true' : undefined}
+        aria-hidden={!pasteOpen}
+        inert={!pasteOpen}
+      >
+        <div className="paste-modal">
+          <div className="panel-title">
+            <span>粘贴日志文本</span>
+            <button onClick={() => setPasteOpen(false)} aria-label="关闭粘贴弹窗"><IconX size={18} /></button>
+          </div>
+          <textarea value={pasteText} onChange={(event) => setPasteText(event.target.value)} placeholder="在这里粘贴 CSV、GPX、KML 或 NMEA 文本..." />
+          <div className="modal-actions">
+            <button className="secondary" onClick={() => setPasteOpen(false)}>取消</button>
+            <button onClick={handlePasteImport}>本地导入</button>
           </div>
         </div>
-      )}
+      </div>
 
       <input
         ref={fileInputRef}

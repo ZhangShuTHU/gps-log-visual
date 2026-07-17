@@ -15,6 +15,36 @@ export function haversineKm(a, b) {
   return 2 * earthRadiusKm * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+export function interpolateTrackPoint(points, progress) {
+  if (!points?.length) return null;
+  if (points.length === 1) return points[0];
+
+  const clampedProgress = Math.min(100, Math.max(0, Number.isFinite(progress) ? progress : 0));
+  const position = (clampedProgress / 100) * (points.length - 1);
+  const lowerIndex = Math.floor(position);
+  const upperIndex = Math.ceil(position);
+  if (lowerIndex === upperIndex) return points[lowerIndex];
+
+  const fraction = position - lowerIndex;
+  const lowerPoint = points[lowerIndex];
+  const upperPoint = points[upperIndex];
+  const point = { ...(fraction <= 0.5 ? lowerPoint : upperPoint) };
+
+  for (const field of ['lat', 'lon', 'ele', 'distanceKm', 'speedKmh', 'slope']) {
+    const lowerValue = lowerPoint[field];
+    const upperValue = upperPoint[field];
+    if (Number.isFinite(lowerValue) && Number.isFinite(upperValue)) {
+      point[field] = lowerValue + (upperValue - lowerValue) * fraction;
+      continue;
+    }
+    point[field] = fraction <= 0.5
+      ? (Number.isFinite(lowerValue) ? lowerValue : Number.isFinite(upperValue) ? upperValue : null)
+      : (Number.isFinite(upperValue) ? upperValue : Number.isFinite(lowerValue) ? lowerValue : null);
+  }
+
+  return point;
+}
+
 export function normalizePoints(points) {
   return points
     .map((point) => ({

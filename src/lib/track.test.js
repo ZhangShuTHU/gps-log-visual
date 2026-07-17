@@ -1,7 +1,47 @@
 import { describe, expect, it } from 'vitest';
-import { enrichTrack, parseDelimited, parseNmea } from './track.js';
+import { enrichTrack, interpolateTrackPoint, parseDelimited, parseNmea } from './track.js';
 
 describe('track utilities', () => {
+  it('returns null when interpolating an empty track', () => {
+    expect(interpolateTrackPoint([], 50)).toBeNull();
+  });
+
+  it('returns exact track endpoints', () => {
+    const points = [
+      { lat: 10, lon: 20, ele: 100, distanceKm: 0, speedKmh: null, slope: null },
+      { lat: 30, lon: 40, ele: 300, distanceKm: 20, speedKmh: 80, slope: 4 },
+    ];
+
+    expect(interpolateTrackPoint(points, 0)).toBe(points[0]);
+    expect(interpolateTrackPoint(points, 100)).toBe(points[1]);
+  });
+
+  it('clamps interpolation progress to the track range', () => {
+    const points = [
+      { lat: 10, lon: 20 },
+      { lat: 30, lon: 40 },
+    ];
+
+    expect(interpolateTrackPoint(points, -20)).toBe(points[0]);
+    expect(interpolateTrackPoint(points, 120)).toBe(points[1]);
+  });
+
+  it('interpolates finite numeric fields at the midpoint', () => {
+    const points = [
+      { lat: 10, lon: 20, ele: null, distanceKm: 0, speedKmh: 40, slope: -2 },
+      { lat: 30, lon: 40, ele: 300, distanceKm: 20, speedKmh: 80, slope: 4 },
+    ];
+
+    expect(interpolateTrackPoint(points, 50)).toMatchObject({
+      lat: 20,
+      lon: 30,
+      ele: 300,
+      distanceKm: 10,
+      speedKmh: 60,
+      slope: 1,
+    });
+  });
+
   it('computes distance and elevation gain with noise thresholding', () => {
     const track = enrichTrack([
       { lat: 0, lon: 0, ele: 100, time: '2024-01-01T00:00:00Z' },
