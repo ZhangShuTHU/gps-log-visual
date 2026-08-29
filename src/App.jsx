@@ -17,7 +17,6 @@ import {
   IconX,
   IconZoomScan,
 } from '@tabler/icons-react';
-import maplibregl from 'maplibre-gl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CartesianGrid,
@@ -29,8 +28,20 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { basemaps, makeRasterStyle } from './lib/basemaps.js';
 import { demoTracks } from './data/demoTracks.js';
+import {
+  attachMapTelemetry,
+  basemaps,
+  createBasemapProvider,
+  createCesiumViewer,
+  flyToTrack,
+  getWorldTerrainProvider,
+  hasCesiumIonToken,
+  removeTrack,
+  renderTrack,
+  updateTrackCursor,
+  useEllipsoidTerrain,
+} from './lib/cesium-map.js';
 import {
   formatDuration,
   interpolateTrackPoint,
@@ -38,7 +49,6 @@ import {
   parseFile,
   parseText,
   toCsv,
-  toGeoJson,
   toGpx,
   toKml,
 } from './lib/track.js';
@@ -58,28 +68,15 @@ function buildDemoTracks() {
   return demoTracks.map((track) => makeTrackDocument(track));
 }
 
-function makeCursorFeatureCollection(point) {
-  return {
-    type: 'FeatureCollection',
-    features: point
-      ? [
-          {
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: [point.lon, point.lat] },
-            properties: {},
-          },
-        ]
-      : [],
-  };
-}
-
 export default function App() {
   const mapNode = useRef(null);
   const mapRef = useRef(null);
+  const renderedTrackRef = useRef({ routeEntities: [], cursorEntity: null });
+  const lastFittedTrackIdRef = useRef(null);
   const fileInputRef = useRef(null);
   const [tracks, setTracks] = useState(buildDemoTracks);
   const [activeId, setActiveId] = useState('trans-eurasia');
-  const [basemapId, setBasemapId] = useState('terrain');
+  const [basemapId, setBasemapId] = useState('satellite');
   const [basemapOpen, setBasemapOpen] = useState(true);
   const [logTrayOpen, setLogTrayOpen] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
@@ -90,7 +87,9 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [status, setStatus] = useState('本地解析器就绪');
   const [cursor, setCursor] = useState({ lat: 39.7749, lon: 19.7002, ele: 242 });
-  const [offlineReady, setOfflineReady] = useState(true);
+  const [cameraHeight, setCameraHeight] = useState(12_500_000);
+  const [mapReady, setMapReady] = useState(false);
+  const [terrainEnabled, setTerrainEnabled] = useState(true);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const scrubRef = useRef(scrub);
@@ -121,131 +120,102 @@ export default function App() {
     setScrub(nextValue);
   }, []);
 
-  const addRouteToMap = useCallback(() => {
-    const map = mapRef.current;
-    if (!map || !activeTrack || !map.isStyleLoaded()) return;
-    const sourceId = 'route-source';
-    const cursorSourceId = 'cursor-source';
-    const route = toGeoJson(activeTrack);
-    const marker = makeCursorFeatureCollection(currentPoint);
-
-    if (map.getSource(sourceId)) {
-      map.getSource(sourceId).setData(route);
-      map.getSource(cursorSourceId)?.setData(marker);
-      return;
-    }
-
-    map.addSource(sourceId, {
-      type: 'geojson',
-      data: route,
-      lineMetrics: true,
-    });
-    map.addLayer({
-      id: 'route-shadow',
-      type: 'line',
-      source: sourceId,
-      paint: {
-        'line-color': 'rgba(12, 26, 35, 0.22)',
-        'line-width': 8,
-        'line-blur': 3,
-      },
-    });
-    map.addLayer({
-      id: 'route-line',
-      type: 'line',
-      source: sourceId,
-      layout: {
-        'line-cap': 'round',
-        'line-join': 'round',
-      },
-      paint: {
-        'line-width': 5,
-        'line-gradient': [
-          'interpolate',
-          ['linear'],
-          ['line-progress'],
-          0,
-          '#2673d9',
-          0.28,
-          '#1c9ed8',
-          0.52,
-          '#20a566',
-          0.72,
-          '#d4a011',
-          1,
-          '#e24a2e',
-        ],
-      },
-    });
-    map.addSource(cursorSourceId, {
-      type: 'geojson',
-      data: marker,
-    });
-    map.addLayer({
-      id: 'route-cursor',
-      type: 'circle',
-      source: cursorSourceId,
-      paint: {
-        'circle-radius': 6,
-        'circle-color': '#ffffff',
-        'circle-stroke-color': '#0f5132',
-        'circle-stroke-width': 3,
-      },
-    });
-  }, [activeTrack, currentPoint]);
-
   const fitRoute = useCallback(() => {
-    const map = mapRef.current;
-    if (!map || !activeTrack?.points.length) return;
-    const bounds = activeTrack.points.reduce(
-      (bbox, point) => bbox.extend([point.lon, point.lat]),
-      new maplibregl.LngLatBounds([activeTrack.points[0].lon, activeTrack.points[0].lat], [activeTrack.points[0].lon, activeTrack.points[0].lat]),
-    );
-    map.fitBounds(bounds, { padding: { top: 110, right: 360, bottom: 270, left: 260 }, duration: 900, maxZoom: 6 });
+    const viewer = mapRef.current;
+    if (!viewer || !activeTrack?.points.length) return;
+    flyToTrack(viewer, activeTrack);
   }, [activeTrack]);
 
   useEffect(() => {
     if (!mapNode.current || mapRef.current) return;
-    const map = new maplibregl.Map({
-      container: mapNode.current,
-      style: makeRasterStyle(basemap),
-      center: [20, 38],
-      zoom: 1.95,
-      attributionControl: false,
-      preserveDrawingBuffer: true,
+    const viewer = createCesiumViewer(mapNode.current);
+    const detachTelemetry = attachMapTelemetry(viewer, {
+      onCursor: setCursor,
+      onCameraHeight: setCameraHeight,
     });
-    mapRef.current = map;
-    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
-    map.on('load', () => {
-      addRouteToMap();
-      fitRoute();
-    });
-    map.on('mousemove', (event) => {
-      setCursor({
-        lat: event.lngLat.lat,
-        lon: event.lngLat.lng,
-        ele: currentPoint?.ele ?? 242,
-      });
-    });
+    mapRef.current = viewer;
+    setMapReady(true);
+
     return () => {
-      map.remove();
+      detachTelemetry();
+      if (!viewer.isDestroyed()) viewer.destroy();
       mapRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    map.setStyle(makeRasterStyle(basemap));
-    map.once('style.load', () => {
-      addRouteToMap();
-      setStatus(basemap.needsKey ? '缺少天地图 Token，正在使用全球底图预览' : `已启用${basemap.name}`);
+    const viewer = mapRef.current;
+    if (!viewer || !mapReady) return;
+    let cancelled = false;
+
+    createBasemapProvider(basemapId).then(({ provider, fallback }) => {
+      if (cancelled || viewer.isDestroyed()) return;
+      viewer.imageryLayers.removeAll(true);
+      viewer.imageryLayers.addImageryProvider(provider);
+      viewer.scene.requestRender();
+      setStatus(fallback
+        ? '未读取到可用的 Cesium ion Token，已切换 OpenStreetMap 预览'
+        : `已启用${basemap.name}`);
     });
-  }, [basemapId]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [basemap, basemapId, mapReady]);
 
   useEffect(() => {
-    addRouteToMap();
-  }, [addRouteToMap, scrub]);
+    const viewer = mapRef.current;
+    if (!viewer || !mapReady) return;
+    let cancelled = false;
+
+    if (!terrainEnabled) {
+      useEllipsoidTerrain(viewer);
+      setStatus('三维地形已关闭');
+      return;
+    }
+
+    getWorldTerrainProvider()
+      .then((provider) => {
+        if (cancelled || viewer.isDestroyed()) return;
+        if (!provider) {
+          useEllipsoidTerrain(viewer);
+          setStatus('缺少 VITE_CESIUM_ION_TOKEN，当前使用椭球地表');
+          return;
+        }
+        viewer.terrainProvider = provider;
+        viewer.scene.requestRender();
+        setStatus('Cesium World Terrain 已启用');
+      })
+      .catch(() => {
+        if (cancelled || viewer.isDestroyed()) return;
+        useEllipsoidTerrain(viewer);
+        setStatus('三维地形加载失败，已切换椭球地表');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mapReady, terrainEnabled]);
+
+  useEffect(() => {
+    const viewer = mapRef.current;
+    if (!viewer || !mapReady) return;
+
+    removeTrack(viewer, renderedTrackRef.current);
+    renderedTrackRef.current = renderTrack(viewer, activeTrack);
+    updateTrackCursor(viewer, renderedTrackRef.current.cursorEntity, currentPoint);
+
+    if (activeTrack?.id && lastFittedTrackIdRef.current !== activeTrack.id) {
+      lastFittedTrackIdRef.current = activeTrack.id;
+      flyToTrack(viewer, activeTrack);
+    }
+  }, [activeTrack, mapReady]);
+
+  useEffect(() => {
+    const viewer = mapRef.current;
+    if (!viewer || !mapReady) return;
+    updateTrackCursor(viewer, renderedTrackRef.current.cursorEntity, currentPoint);
+  }, [currentPoint, mapReady]);
 
   useEffect(() => {
     if (!isPlaying || !activeTrack?.points.length) return;
@@ -266,7 +236,9 @@ export default function App() {
         if (rangeInputRef.current) rangeInputRef.current.value = String(nextScrub);
 
         const point = interpolateTrackPoint(activeTrack.points, nextScrub);
-        mapRef.current?.getSource('cursor-source')?.setData(makeCursorFeatureCollection(point));
+        if (mapRef.current) {
+          updateTrackCursor(mapRef.current, renderedTrackRef.current.cursorEntity, point);
+        }
 
         if (timestamp - lastStateCommitTime >= PLAYBACK_STATE_INTERVAL_MS) {
           lastStateCommitTime = timestamp;
@@ -327,8 +299,9 @@ export default function App() {
       csv: { body: toCsv(activeTrack), type: 'text/csv' },
     };
     if (format === 'png') {
-      const map = mapRef.current;
-      map?.getCanvas().toBlob((blob) => {
+      const viewer = mapRef.current;
+      viewer?.scene.render();
+      viewer?.scene.canvas.toBlob((blob) => {
         if (blob) saveBlob(blob, 'atlas-canvas-map.png');
       });
       setExportOpen(false);
@@ -342,7 +315,18 @@ export default function App() {
   function clearDemoTracks() {
     setTracks([]);
     setActiveId(null);
+    lastFittedTrackIdRef.current = null;
     setStatus('新地图已就绪');
+  }
+
+  function zoomMap(direction) {
+    const viewer = mapRef.current;
+    if (!viewer) return;
+    const height = Math.max(100, viewer.camera.positionCartographic.height);
+    const amount = direction === 'in' ? height * 0.35 : height * 0.5;
+    if (direction === 'in') viewer.camera.zoomIn(amount);
+    else viewer.camera.zoomOut(amount);
+    viewer.scene.requestRender();
   }
 
   function selectBrowseMode() {
@@ -426,7 +410,11 @@ export default function App() {
       </header>
 
       <section className="map-stage">
-        <div ref={mapNode} className={`map-root ${measureMode ? 'is-measuring' : ''}`} />
+        <div
+          ref={mapNode}
+          className={`map-root ${measureMode ? 'is-measuring' : ''}`}
+          aria-label="Cesium 三维轨迹地图"
+        />
 
         <nav className="tool-rail" aria-label="地图工具">
           <button className={!measureMode ? 'active' : ''} title="选择" onClick={selectBrowseMode}>
@@ -445,7 +433,12 @@ export default function App() {
 
         <aside className={`basemap-panel ${basemapOpen ? 'open' : ''}`}>
           <div className="panel-title">
-            <span>底图</span>
+            <span className="panel-heading">
+              <span>底图与地形</span>
+              <small className={hasCesiumIonToken ? 'ion-online' : ''}>
+                {hasCesiumIonToken ? 'ION ONLINE' : 'ION FALLBACK'}
+              </small>
+            </span>
             <button aria-label="关闭底图面板" onClick={() => setBasemapOpen(false)}>
               <IconX size={18} />
             </button>
@@ -463,8 +456,15 @@ export default function App() {
             ))}
           </div>
           <label className="switch-line">
-            <span>离线就绪</span>
-            <input type="checkbox" checked={offlineReady} onChange={(event) => setOfflineReady(event.target.checked)} />
+            <span>
+              三维地形
+              <small>Cesium World Terrain</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={terrainEnabled}
+              onChange={(event) => setTerrainEnabled(event.target.checked)}
+            />
           </label>
         </aside>
 
@@ -482,8 +482,8 @@ export default function App() {
         </div>
 
         <div className="zoom-stack">
-          <button onClick={() => mapRef.current?.zoomIn()} aria-label="放大"><IconPlus size={18} /></button>
-          <button onClick={() => mapRef.current?.zoomOut()} aria-label="缩小"><IconMinus size={18} /></button>
+          <button onClick={() => zoomMap('in')} aria-label="放大"><IconPlus size={18} /></button>
+          <button onClick={() => zoomMap('out')} aria-label="缩小"><IconMinus size={18} /></button>
         </div>
 
         <section className={`log-tray ${logTrayOpen ? '' : 'is-hidden'}`}>
@@ -556,7 +556,13 @@ export default function App() {
               <span className="speed">速度 (km/h)</span>
               <span className="slope">坡度 (%)</span>
             </div>
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              minWidth={0}
+              minHeight={0}
+              initialDimension={{ width: 800, height: 120 }}
+            >
               <LineChart data={chartData} margin={{ top: 8, right: 16, left: 18, bottom: 8 }}>
                 <CartesianGrid stroke="#e8ece8" vertical={false} />
                 <XAxis dataKey="km" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} unit=" km" />
@@ -573,9 +579,9 @@ export default function App() {
         </section>
 
         <footer className="statusbar">
-          <span>WGS 84 / Pseudo-Mercator</span>
+          <span>WGS 84 / Cesium 3D</span>
           <span>{status}</span>
-          <span>缩放: {mapRef.current?.getZoom?.().toFixed(1) ?? '2.2'}</span>
+          <span>视高: {formatCameraHeight(cameraHeight)}</span>
         </footer>
       </section>
 
@@ -618,6 +624,13 @@ function Metric({ label, value }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function formatCameraHeight(height) {
+  if (!Number.isFinite(height)) return '—';
+  if (height >= 1_000_000) return `${(height / 1_000_000).toFixed(1)} Mm`;
+  if (height >= 1_000) return `${(height / 1_000).toFixed(height >= 100_000 ? 0 : 1)} km`;
+  return `${Math.round(height)} m`;
 }
 
 function saveBlob(blob, filename) {

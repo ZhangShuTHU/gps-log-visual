@@ -6,8 +6,8 @@ Local-first GPS log visualization app inspired by GPS Visualizer.
 
 - Import local GPX, KML, GeoJSON, CSV, TXT, and NMEA files.
 - Paste log text directly in the browser.
-- Render tracks on a global MapLibre map.
-- Switch basemaps: Standard, Terrain, Satellite, Tianditu-ready, and Custom XYZ placeholder.
+- Render tracks on a CesiumJS 3D globe with Cesium World Terrain.
+- Switch between Cesium ion satellite/road imagery, Esri topographic tiles, and the built-in Natural Earth basemap.
 - Inspect distance, duration, speed, ascent, descent, points, and elevation/speed/slope profiles.
 - Export the active track as GPX, KML, CSV, or PNG.
 
@@ -19,6 +19,14 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:5173`.
+
+For live Cesium ion imagery and terrain, add a local `.env.local` file:
+
+```bash
+VITE_CESIUM_ION_TOKEN=your_scoped_cesium_ion_token
+```
+
+Without a token, the app falls back to OpenStreetMap imagery and an ellipsoid surface.
 
 ## Checks
 
@@ -37,8 +45,8 @@ Recommended Pages settings:
 - Build output directory: `dist`
 - Node.js version: `22`
 
-Optional environment variables:
+Environment variables:
 
-- `VITE_TIANDITU_TOKEN`: enables live Tianditu terrain tiles.
+- `VITE_CESIUM_ION_TOKEN`: enables Cesium ion imagery and Cesium World Terrain. Configure it as a Cloudflare Pages build variable and scope the token to the deployed origins.
 
 All GPS parsing runs client-side in the browser; uploaded logs are not sent to an app backend.
