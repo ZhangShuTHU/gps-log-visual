@@ -546,6 +546,13 @@ textarea:focus-visible {
   font-size: 12px;
 }
 
+.coord-card .solar-time {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  color: var(--green);
+}
+
 .zoom-stack {
   right: 12px;
   bottom: 328px;
@@ -1069,6 +1076,10 @@ textarea:focus-visible {
     gap: 8px;
     padding: 0 12px;
     font-size: 12px;
+  }
+
+  .scene-status-label {
+    display: none;
   }
 }
 

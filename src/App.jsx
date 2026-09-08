@@ -42,6 +42,7 @@ import {
   updateTrackCursor,
   useEllipsoidTerrain,
 } from './lib/cesium-map.js';
+import { formatLocalSolarTime, formatUtcTime } from './lib/solar-time.js';
 import {
   formatDuration,
   interpolateTrackPoint,
@@ -88,6 +89,7 @@ export default function App() {
   const [status, setStatus] = useState('本地解析器就绪');
   const [cursor, setCursor] = useState({ lat: 39.7749, lon: 19.7002, ele: 242 });
   const [cameraHeight, setCameraHeight] = useState(12_500_000);
+  const [sceneTime, setSceneTime] = useState(() => new Date());
   const [mapReady, setMapReady] = useState(false);
   const [terrainEnabled, setTerrainEnabled] = useState(true);
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -132,6 +134,7 @@ export default function App() {
     const detachTelemetry = attachMapTelemetry(viewer, {
       onCursor: setCursor,
       onCameraHeight: setCameraHeight,
+      onSceneTime: setSceneTime,
     });
     mapRef.current = viewer;
     setMapReady(true);
@@ -479,6 +482,7 @@ export default function App() {
           <span>纬度&nbsp; {cursor.lat.toFixed(4)}°</span>
           <span>经度&nbsp; {cursor.lon.toFixed(4)}°</span>
           <span>海拔&nbsp; {Math.round(cursor.ele ?? 0)} m</span>
+          <span className="solar-time">当地太阳时&nbsp; {formatLocalSolarTime(sceneTime, cursor.lon)}</span>
         </div>
 
         <div className="zoom-stack">
@@ -581,7 +585,10 @@ export default function App() {
         <footer className="statusbar">
           <span>WGS 84 / Cesium 3D</span>
           <span>{status}</span>
-          <span>视高: {formatCameraHeight(cameraHeight)}</span>
+          <span>
+            <span className="scene-status-label">实时晨昏 · {formatUtcTime(sceneTime)} · </span>
+            视高 {formatCameraHeight(cameraHeight)}
+          </span>
         </footer>
       </section>
 

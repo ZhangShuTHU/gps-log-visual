@@ -2,12 +2,15 @@ import {
   BoundingSphere,
   Cartesian3,
   Cartographic,
+  ClockStep,
   Color,
+  DynamicAtmosphereLightingType,
   EllipsoidTerrainProvider,
   HeadingPitchRange,
   HeightReference,
   Ion,
   IonWorldImageryStyle,
+  JulianDate,
   Math as CesiumMath,
   OpenStreetMapImageryProvider,
   PolylineGlowMaterialProperty,
@@ -72,6 +75,7 @@ export function createCesiumViewer(container) {
     sceneMode: SceneMode.SCENE3D,
     sceneModePicker: false,
     selectionIndicator: false,
+    shouldAnimate: true,
     timeline: false,
     terrainProvider: new EllipsoidTerrainProvider(),
     vrButton: false,
@@ -83,11 +87,23 @@ export function createCesiumViewer(container) {
     },
   });
 
+  viewer.clock.clockStep = ClockStep.SYSTEM_CLOCK;
+  viewer.clock.canAnimate = true;
+  viewer.clock.shouldAnimate = true;
+
   viewer.scene.globe.baseColor = Color.fromCssColorString('#dbe7df');
   viewer.scene.globe.depthTestAgainstTerrain = true;
+  viewer.scene.globe.enableLighting = true;
+  viewer.scene.globe.dynamicAtmosphereLighting = true;
+  viewer.scene.globe.dynamicAtmosphereLightingFromSun = true;
+  viewer.scene.globe.lightingFadeOutDistance = 0;
+  viewer.scene.globe.lightingFadeInDistance = 1;
+  viewer.scene.globe.nightFadeOutDistance = 0;
+  viewer.scene.globe.nightFadeInDistance = 1;
   viewer.scene.highDynamicRange = true;
   viewer.scene.postProcessStages.fxaa.enabled = true;
   viewer.scene.skyAtmosphere.atmosphereLightIntensity = 10;
+  viewer.scene.atmosphere.dynamicLighting = DynamicAtmosphereLightingType.SUNLIGHT;
   viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
   viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 1.5);
   viewer.camera.setView({
@@ -237,7 +253,7 @@ export function pickGlobePosition(viewer, screenPosition) {
   };
 }
 
-export function attachMapTelemetry(viewer, { onCursor, onCameraHeight }) {
+export function attachMapTelemetry(viewer, { onCursor, onCameraHeight, onSceneTime }) {
   const handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
   let pendingPosition = null;
   let frameId = null;
@@ -256,11 +272,23 @@ export function attachMapTelemetry(viewer, { onCursor, onCameraHeight }) {
     onCameraHeight(viewer.camera.positionCartographic.height);
   };
   const removeCameraListener = viewer.camera.changed.addEventListener(publishCameraHeight);
+  let publishedMinute = null;
+  const publishSceneTime = (clock) => {
+    if (!onSceneTime) return;
+    const date = JulianDate.toDate(clock.currentTime);
+    const minute = Math.floor(date.getTime() / 60_000);
+    if (minute === publishedMinute) return;
+    publishedMinute = minute;
+    onSceneTime(date);
+  };
+  const removeClockListener = viewer.clock.onTick.addEventListener(publishSceneTime);
   publishCameraHeight();
+  publishSceneTime(viewer.clock);
 
   return () => {
     if (frameId != null) window.cancelAnimationFrame(frameId);
     removeCameraListener();
+    removeClockListener();
     handler.destroy();
   };
 }
