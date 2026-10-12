@@ -24,6 +24,7 @@ import {
   createWorldImageryAsync,
   createWorldTerrainAsync,
 } from 'cesium';
+import { haversineKm } from './track.js';
 
 const ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN?.trim() ?? '';
 const routeColors = ['#2673d9', '#1c9ed8', '#20a566', '#d4a011', '#e24a2e'];
@@ -232,7 +233,12 @@ export function flyToTrack(viewer, track, duration = 0.9) {
   if (!track?.points.length) return;
   const positions = track.points.map((point) => Cartesian3.fromDegrees(point.lon, point.lat));
   const sphere = BoundingSphere.fromPoints(positions);
-  const range = Math.max(24_000, sphere.radius * 2.65);
+  viewer.resize();
+  const frustum = viewer.camera.frustum;
+  const verticalTangent = Math.tan(frustum.fovy * 0.5);
+  const horizontalTangent = frustum.aspectRatio * verticalTangent;
+  const fitRange = sphere.radius / Math.min(verticalTangent, horizontalTangent);
+  const range = Math.max(24_000, sphere.radius * 2.65, fitRange * 1.25);
 
   viewer.camera.flyToBoundingSphere(sphere, {
     duration,
@@ -290,6 +296,47 @@ export function attachMapTelemetry(viewer, { onCursor, onCameraHeight, onSceneTi
     removeCameraListener();
     removeClockListener();
     handler.destroy();
+  };
+}
+
+export function attachDistanceMeasurement(viewer, onChange) {
+  const handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
+  const points = [];
+  const entities = [];
+  let distanceKm = 0;
+  const color = Color.fromCssColorString('#f2ce82');
+  const line = viewer.entities.add({
+    polyline: { positions: [], width: 3, clampToGround: true, material: color },
+  });
+  onChange({ points: 0, distanceKm: 0 });
+
+  handler.setInputAction((movement) => {
+    const point = pickGlobePosition(viewer, movement.position);
+    if (!point) return;
+    if (points.length) distanceKm += haversineKm(points.at(-1), point);
+    points.push(point);
+    line.polyline.positions = points.map((item) => Cartesian3.fromDegrees(item.lon, item.lat));
+    entities.push(viewer.entities.add({
+      position: Cartesian3.fromDegrees(point.lon, point.lat),
+      point: {
+        pixelSize: 8,
+        color,
+        outlineColor: Color.fromCssColorString('#293d32'),
+        outlineWidth: 2,
+        heightReference: HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    }));
+    onChange({ points: points.length, distanceKm });
+    viewer.scene.requestRender();
+  }, ScreenSpaceEventType.LEFT_CLICK);
+
+  return () => {
+    handler.destroy();
+    if (viewer.isDestroyed()) return;
+    viewer.entities.remove(line);
+    for (const entity of entities) viewer.entities.remove(entity);
+    viewer.scene.requestRender();
   };
 }
 

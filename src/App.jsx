@@ -3,33 +3,23 @@ import {
   IconDownload,
   IconFileImport,
   IconLayoutSidebar,
-  IconMap,
   IconMountain,
   IconMinus,
-  IconPlayerPauseFilled,
-  IconPlayerPlayFilled,
-  IconPlayerSkipBack,
-  IconPlayerSkipForward,
   IconPlus,
   IconRulerMeasure,
+  IconStack2,
+  IconSun,
   IconTargetArrow,
-  IconCheck,
   IconX,
   IconZoomScan,
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import PlaybackDock from './components/PlaybackDock.jsx';
+import TrackProfile from './components/TrackProfile.jsx';
+import TrackSidebar from './components/TrackSidebar.jsx';
 import { demoTracks } from './data/demoTracks.js';
 import {
+  attachDistanceMeasurement,
   attachMapTelemetry,
   basemaps,
   createBasemapProvider,
@@ -44,7 +34,6 @@ import {
 } from './lib/cesium-map.js';
 import { formatLocalSolarTime, formatUtcTime } from './lib/solar-time.js';
 import {
-  formatDuration,
   interpolateTrackPoint,
   makeTrackDocument,
   parseFile,
@@ -55,13 +44,6 @@ import {
 } from './lib/track.js';
 
 const colors = ['#1c7f48', '#f97316', '#1f8edb', '#d33b5f', '#7c3aed'];
-const colorModes = [
-  { value: 'Time', label: '时间' },
-  { value: 'Speed', label: '速度' },
-  { value: 'Elevation', label: '海拔' },
-  { value: 'Slope', label: '坡度' },
-];
-
 const PLAYBACK_STEP_MS = 260;
 const PLAYBACK_STATE_INTERVAL_MS = 100;
 
@@ -75,18 +57,21 @@ export default function App() {
   const renderedTrackRef = useRef({ routeEntities: [], cursorEntity: null });
   const lastFittedTrackIdRef = useRef(null);
   const fileInputRef = useRef(null);
+  const pasteInputRef = useRef(null);
   const [tracks, setTracks] = useState(buildDemoTracks);
   const [activeId, setActiveId] = useState('trans-eurasia');
   const [basemapId, setBasemapId] = useState('satellite');
-  const [basemapOpen, setBasemapOpen] = useState(true);
-  const [logTrayOpen, setLogTrayOpen] = useState(true);
+  const [basemapOpen, setBasemapOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia('(min-width: 900px)').matches);
+  const [trackSearch, setTrackSearch] = useState('');
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileMetric, setProfileMetric] = useState('elevation');
   const [exportOpen, setExportOpen] = useState(false);
-  const [colorMode, setColorMode] = useState('Time');
   const [isPlaying, setIsPlaying] = useState(false);
-  const [scrub, setScrub] = useState(52);
+  const [scrub, setScrub] = useState(0);
   const [measureMode, setMeasureMode] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const [status, setStatus] = useState('本地解析器就绪');
+  const [measurement, setMeasurement] = useState({ points: 0, distanceKm: 0 });
+  const [status, setStatus] = useState('日志仅在本地处理');
   const [cursor, setCursor] = useState({ lat: 39.7749, lon: 19.7002, ele: 242 });
   const [cameraHeight, setCameraHeight] = useState(12_500_000);
   const [sceneTime, setSceneTime] = useState(() => new Date());
@@ -104,11 +89,11 @@ export default function App() {
   const chartData = useMemo(() => {
     if (!activeTrack) return [];
     const stride = Math.max(1, Math.ceil(activeTrack.points.length / 180));
-    return activeTrack.points.filter((_, index) => index % stride === 0).map((point) => ({
-      km: Number(point.distanceKm.toFixed(1)),
-      elevation: point.ele ?? 0,
-      speed: point.speedKmh ?? 0,
-      slope: point.slope ?? 0,
+    return activeTrack.points.filter((_, index) => index % stride === 0 || index === activeTrack.points.length - 1).map((point) => ({
+      km: point.distanceKm,
+      elevation: point.ele,
+      speed: point.speedKmh,
+      slope: point.slope,
     }));
   }, [activeTrack]);
 
@@ -118,9 +103,18 @@ export default function App() {
     const numericValue = Number(value);
     const nextValue = Math.min(100, Math.max(0, Number.isFinite(numericValue) ? numericValue : 0));
     scrubRef.current = nextValue;
-    if (rangeInputRef.current) rangeInputRef.current.value = String(nextValue);
+    if (rangeInputRef.current) {
+      rangeInputRef.current.value = String(nextValue);
+      rangeInputRef.current.style.setProperty('--progress', `${nextValue}%`);
+    }
     setScrub(nextValue);
   }, []);
+
+  useEffect(() => {
+    const viewer = mapRef.current;
+    if (!viewer || !mapReady || !measureMode) return;
+    return attachDistanceMeasurement(viewer, setMeasurement);
+  }, [mapReady, measureMode]);
 
   const fitRoute = useCallback(() => {
     const viewer = mapRef.current;
@@ -157,7 +151,7 @@ export default function App() {
       viewer.imageryLayers.addImageryProvider(provider);
       viewer.scene.requestRender();
       setStatus(fallback
-        ? '未读取到可用的 Cesium ion Token，已切换 OpenStreetMap 预览'
+        ? '已启用备用底图'
         : `已启用${basemap.name}`);
     });
 
@@ -182,17 +176,17 @@ export default function App() {
         if (cancelled || viewer.isDestroyed()) return;
         if (!provider) {
           useEllipsoidTerrain(viewer);
-          setStatus('缺少 VITE_CESIUM_ION_TOKEN，当前使用椭球地表');
+          setStatus('已启用标准地表');
           return;
         }
         viewer.terrainProvider = provider;
         viewer.scene.requestRender();
-        setStatus('Cesium World Terrain 已启用');
+        setStatus('三维地形已启用');
       })
       .catch(() => {
         if (cancelled || viewer.isDestroyed()) return;
         useEllipsoidTerrain(viewer);
-        setStatus('三维地形加载失败，已切换椭球地表');
+        setStatus('地形暂不可用，已启用标准地表');
       });
 
     return () => {
@@ -236,7 +230,10 @@ export default function App() {
         const nextScrub = (scrubRef.current + elapsedMs / PLAYBACK_STEP_MS) % 100;
         scrubRef.current = nextScrub;
 
-        if (rangeInputRef.current) rangeInputRef.current.value = String(nextScrub);
+        if (rangeInputRef.current) {
+          rangeInputRef.current.value = String(nextScrub);
+          rangeInputRef.current.style.setProperty('--progress', `${nextScrub}%`);
+        }
 
         const point = interpolateTrackPoint(activeTrack.points, nextScrub);
         if (mapRef.current) {
@@ -262,6 +259,33 @@ export default function App() {
     };
   }, [isPlaying, activeTrack]);
 
+  useEffect(() => {
+    function dismissPanels(event) {
+      if (!event.target.closest('.export-menu')) setExportOpen(false);
+      if (!event.target.closest('.layer-controls')) setBasemapOpen(false);
+    }
+    function handleEscape(event) {
+      if (event.key !== 'Escape') return;
+      setExportOpen(false);
+      setBasemapOpen(false);
+      setPasteOpen(false);
+      if (window.matchMedia('(max-width: 899px)').matches) setSidebarOpen(false);
+    }
+    document.addEventListener('pointerdown', dismissPanels);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('pointerdown', dismissPanels);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pasteOpen) return;
+    const previousFocus = document.activeElement;
+    pasteInputRef.current?.focus();
+    return () => previousFocus?.focus();
+  }, [pasteOpen]);
+
   async function importFiles(fileList) {
     const files = Array.from(fileList ?? []);
     if (!files.length) return;
@@ -270,6 +294,7 @@ export default function App() {
     for (const [index, file] of files.entries()) {
       try {
         const parsed = await parseFile(file);
+        if (!parsed.points.length) throw new Error('未找到有效坐标');
         parsed.color = colors[(tracks.length + index) % colors.length];
         parsedTracks.push(parsed);
       } catch (error) {
@@ -279,19 +304,35 @@ export default function App() {
     if (parsedTracks.length) {
       setTracks((current) => [...parsedTracks, ...current]);
       setActiveId(parsedTracks[0].id);
+      setIsPlaying(false);
+      setScrubValue(0);
+      setTrackSearch('');
+      setSidebarOpen(true);
       setStatus(`已本地导入 ${parsedTracks.length} 个文件`);
     }
   }
 
   function handlePasteImport() {
     if (!pasteText.trim()) return;
-    const parsed = parseText(pasteText, '粘贴日志.txt', new Blob([pasteText]).size);
-    parsed.color = colors[tracks.length % colors.length];
-    setTracks((current) => [parsed, ...current]);
-    setActiveId(parsed.id);
-    setPasteText('');
-    setPasteOpen(false);
-    setStatus('粘贴日志已本地导入');
+    try {
+      const parsed = parseText(pasteText, '粘贴日志.txt', new Blob([pasteText]).size);
+      if (!parsed.points.length) {
+        setStatus('未找到有效坐标，请检查日志内容');
+        return;
+      }
+      parsed.color = colors[tracks.length % colors.length];
+      setTracks((current) => [parsed, ...current]);
+      setActiveId(parsed.id);
+      setIsPlaying(false);
+      setScrubValue(0);
+      setTrackSearch('');
+      setSidebarOpen(true);
+      setPasteText('');
+      setPasteOpen(false);
+      setStatus('粘贴日志已本地导入');
+    } catch (error) {
+      setStatus(`无法解析日志: ${error.message}`);
+    }
   }
 
   function downloadTrack(format) {
@@ -318,6 +359,10 @@ export default function App() {
   function clearDemoTracks() {
     setTracks([]);
     setActiveId(null);
+    setIsPlaying(false);
+    setProfileOpen(false);
+    setScrubValue(0);
+    setTrackSearch('');
     lastFittedTrackIdRef.current = null;
     setStatus('新地图已就绪');
   }
@@ -345,269 +390,259 @@ export default function App() {
     });
   }
 
-  function toggleLogTray() {
-    const update = () => setLogTrayOpen((value) => !value);
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function selectTrack(track) {
+    setActiveId(track.id);
+    setIsPlaying(false);
+    setScrubValue(0);
+  }
 
-    if (!reduceMotion && document.startViewTransition) {
-      document.startViewTransition(update);
+  function seekFromProfile(value) {
+    const distance = Number(value);
+    const points = activeTrack?.points;
+    if (value == null || !Number.isFinite(distance) || !points?.length) return;
+    const nextIndex = points.findIndex((point) => point.distanceKm >= distance);
+    if (nextIndex <= 0) {
+      setScrubValue(nextIndex === 0 ? 0 : 100);
       return;
     }
-
-    update();
+    const start = points[nextIndex - 1].distanceKm;
+    const segment = points[nextIndex].distanceKm - start;
+    const fraction = segment > 0 ? (distance - start) / segment : 0;
+    setScrubValue(((nextIndex - 1 + fraction) / (points.length - 1)) * 100);
   }
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" onDragOver={(event) => {
+      if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+    }} onDrop={(event) => {
+      event.preventDefault();
+      importFiles(event.dataTransfer.files);
+    }}>
       <header className="topbar">
         <div className="brand">
-          <IconMountain size={28} stroke={1.8} />
-          <span>Atlas Canvas</span>
+          <span className="brand-mark"><IconMountain size={22} stroke={1.6} /></span>
+          <span>Atlas<span className="brand-secondary"> Canvas</span></span>
         </div>
         <button
-          className={`icon-button ${logTrayOpen ? 'is-active' : ''}`}
-          aria-label="切换文件栏"
-          onClick={toggleLogTray}
+          className={`icon-button sidebar-toggle ${sidebarOpen ? 'is-active' : ''}`}
+          aria-label={sidebarOpen ? '收起轨迹栏' : '展开轨迹栏'}
+          aria-expanded={sidebarOpen}
+          aria-controls="track-sidebar"
+          title={sidebarOpen ? '收起轨迹栏' : '展开轨迹栏'}
+          onClick={() => setSidebarOpen((value) => !value)}
         >
-          <IconLayoutSidebar size={20} />
+          <IconLayoutSidebar size={19} />
         </button>
-        <button className="command" onClick={() => fileInputRef.current?.click()}>
-          <IconFileImport size={18} />
-          导入日志
-        </button>
-        <button className="command" onClick={clearDemoTracks}>
-          <IconMap size={18} />
-          新地图
-        </button>
+        <span className="workspace-label">轨迹工作台</span>
         <div className="topbar-spacer" />
-        <button className={`command ${measureMode ? 'is-active' : ''}`} onClick={toggleMeasureMode}>
-          <IconRulerMeasure size={18} />
-          测距
-        </button>
-        <button className="command" onClick={fitRoute}>
-          <IconZoomScan size={18} />
-          适配轨迹
+        <span className="local-indicator"><span />本地处理</span>
+        <button className="command primary-command" onClick={() => fileInputRef.current?.click()}>
+          <IconPlus size={17} />
+          <span>导入日志</span>
         </button>
         <div className="export-menu">
           <button
             className="command"
             aria-expanded={exportOpen}
+            aria-controls="export-options"
+            disabled={!activeTrack?.points.length}
             onClick={() => setExportOpen((value) => !value)}
           >
-            <IconDownload size={18} />
-            导出
-            <IconChevronDown size={16} />
+            <IconDownload size={17} />
+            <span>导出</span>
+            <IconChevronDown className="export-chevron" size={14} />
           </button>
           <div
+            id="export-options"
             className={`menu-popover ${exportOpen ? 'is-open' : ''}`}
             aria-hidden={!exportOpen}
             inert={!exportOpen}
           >
+            <span className="popover-label">导出当前轨迹</span>
             {['gpx', 'kml', 'csv', 'png'].map((format) => (
               <button key={format} onClick={() => downloadTrack(format)}>
-                {format.toUpperCase()}
+                <span>{format.toUpperCase()}</span>
+                <small>{format === 'png' ? '地图图像' : '轨迹文件'}</small>
               </button>
             ))}
           </div>
         </div>
       </header>
 
-      <section className="map-stage">
-        <div
-          ref={mapNode}
-          className={`map-root ${measureMode ? 'is-measuring' : ''}`}
-          aria-label="Cesium 三维轨迹地图"
+      <div className={`workspace ${sidebarOpen ? '' : 'is-sidebar-closed'}`}>
+        <button
+          className={`sidebar-backdrop ${sidebarOpen ? 'is-open' : ''}`}
+          aria-label="关闭轨迹栏"
+          tabIndex={-1}
+          onClick={() => setSidebarOpen(false)}
+        />
+        <TrackSidebar
+          isOpen={sidebarOpen}
+          tracks={tracks}
+          activeTrack={activeTrack}
+          search={trackSearch}
+          onSearch={setTrackSearch}
+          onSelect={selectTrack}
+          onImport={() => fileInputRef.current?.click()}
+          onFiles={importFiles}
+          onPaste={() => setPasteOpen(true)}
+          onClear={clearDemoTracks}
+          onClose={() => setSidebarOpen(false)}
+          onProfile={() => {
+            setProfileOpen(true);
+            if (window.matchMedia('(max-width: 899px)').matches) setSidebarOpen(false);
+          }}
+          status={status}
         />
 
-        <nav className="tool-rail" aria-label="地图工具">
-          <button className={!measureMode ? 'active' : ''} title="选择" onClick={selectBrowseMode}>
-            <IconTargetArrow size={20} />
-            <span>选择</span>
-          </button>
-          <button className={measureMode ? 'active' : ''} title="测距" onClick={toggleMeasureMode}>
-            <IconRulerMeasure size={20} />
-            <span>测距</span>
-          </button>
-          <button className={basemapOpen ? 'active' : ''} title="图层" onClick={() => setBasemapOpen((value) => !value)}>
-            <IconLayoutSidebar size={20} />
-            <span>图层</span>
-          </button>
-        </nav>
-
-        <aside className={`basemap-panel ${basemapOpen ? 'open' : ''}`}>
-          <div className="panel-title">
-            <span className="panel-heading">
-              <span>底图与地形</span>
-              <small className={hasCesiumIonToken ? 'ion-online' : ''}>
-                {hasCesiumIonToken ? 'ION ONLINE' : 'ION FALLBACK'}
-              </small>
-            </span>
-            <button aria-label="关闭底图面板" onClick={() => setBasemapOpen(false)}>
-              <IconX size={18} />
-            </button>
-          </div>
-          <div className="basemap-list">
-            {basemaps.map((item) => (
-              <button key={item.id} className={item.id === basemapId ? 'selected' : ''} onClick={() => setBasemapId(item.id)}>
-                <span className="radio" />
-                <span className="tile-chip" style={{ background: item.color }} />
-                <span>
-                  <strong>{item.name}</strong>
-                  <small>{item.scope}</small>
-                </span>
-              </button>
-            ))}
-          </div>
-          <label className="switch-line">
-            <span>
-              三维地形
-              <small>Cesium World Terrain</small>
-            </span>
-            <input
-              type="checkbox"
-              checked={terrainEnabled}
-              onChange={(event) => setTerrainEnabled(event.target.checked)}
-            />
-          </label>
-        </aside>
-
-        {!basemapOpen && (
-          <button className="floating-basemap" onClick={() => setBasemapOpen(true)}>
-            <IconLayoutSidebar size={18} />
-            底图
-          </button>
-        )}
-
-        <div className="coord-card">
-          <span>纬度&nbsp; {cursor.lat.toFixed(4)}°</span>
-          <span>经度&nbsp; {cursor.lon.toFixed(4)}°</span>
-          <span>海拔&nbsp; {Math.round(cursor.ele ?? 0)} m</span>
-          <span className="solar-time">当地太阳时&nbsp; {formatLocalSolarTime(sceneTime, cursor.lon)}</span>
-        </div>
-
-        <div className="zoom-stack">
-          <button onClick={() => zoomMap('in')} aria-label="放大"><IconPlus size={18} /></button>
-          <button onClick={() => zoomMap('out')} aria-label="缩小"><IconMinus size={18} /></button>
-        </div>
-
-        <section className={`log-tray ${logTrayOpen ? '' : 'is-hidden'}`}>
-          <div className="tray-header">
-            <strong>日志文件</strong>
-            <span>{tracks.length} 个启用</span>
-          </div>
+        <section className={`map-stage ${profileOpen && activeTrack ? 'has-profile' : ''}`} aria-label="地图工作区">
           <div
-            className={`drop-zone ${dragging ? 'dragging' : ''}`}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDragging(false);
-              importFiles(event.dataTransfer.files);
-            }}
-          >
-            <span>拖放文件到这里</span>
-            <button onClick={() => fileInputRef.current?.click()}>
-              <IconFileImport size={16} />
-              导入日志
-            </button>
-            <small>GPX, KML, CSV, TXT, NMEA</small>
-            <button className="text-button" onClick={() => setPasteOpen(true)}>
-              粘贴日志文本
-            </button>
-          </div>
-          <div className="track-list">
-            {tracks.map((track) => (
-              <button key={track.id} className={track.id === activeId ? 'selected' : ''} onClick={() => setActiveId(track.id)}>
-                <span className="check">{track.id === activeId ? <IconCheck size={11} stroke={2.4} /> : null}</span>
-                <span className="track-swatch" style={{ background: track.color }} />
-                <span>
-                  <strong>{track.name}</strong>
-                  <small>
-                    {track.stats.points.toLocaleString()} 点 · {track.size}
-                  </small>
-                </span>
-              </button>
-            ))}
-          </div>
-          <button className="clear-button" onClick={clearDemoTracks}>全部清除</button>
-        </section>
+            ref={mapNode}
+            className={`map-root ${measureMode ? 'is-measuring' : ''}`}
+            aria-label="Cesium 三维轨迹地图"
+          />
 
-        <section className={`analytics ${logTrayOpen ? '' : 'full-width'}`}>
-          <div className="metric-strip">
-            <Metric label="距离" value={`${Math.round(activeTrack?.stats.distanceKm ?? 0).toLocaleString()} km`} />
-            <Metric label="时长" value={formatDuration(activeTrack?.stats.durationHours ?? 0)} />
-            <Metric label="移动速度" value={`${(activeTrack?.stats.movingSpeedKmh ?? 0).toFixed(1)} km/h`} />
-            <Metric label="累计爬升" value={`${Math.round(activeTrack?.stats.ascentM ?? 0).toLocaleString()} m`} />
-            <Metric label="累计下降" value={`${Math.round(activeTrack?.stats.descentM ?? 0).toLocaleString()} m`} />
-            <Metric label="轨迹点" value={(activeTrack?.stats.points ?? 0).toLocaleString()} />
-          </div>
-          <div className="playback">
-            <button onClick={() => setIsPlaying((value) => !value)}>{isPlaying ? <IconPlayerPauseFilled size={18} /> : <IconPlayerPlayFilled size={18} />}</button>
-            <button onClick={() => setScrubValue(0)}><IconPlayerSkipBack size={18} /></button>
-            <button onClick={() => setScrubValue(100)}><IconPlayerSkipForward size={18} /></button>
-            <select value={colorMode} onChange={(event) => setColorMode(event.target.value)}>
-              {colorModes.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
-            </select>
-            <input ref={rangeInputRef} aria-label="轨迹时间轴" type="range" min="0" max="100" step="0.01" value={scrub} onChange={(event) => setScrubValue(event.target.value)} />
-            <span>{Math.round(scrub)}% · 按{colorModes.find((mode) => mode.value === colorMode)?.label ?? colorMode}着色</span>
-          </div>
-          <div className="profile-chart">
-            <div className="chart-legend">
-              <span className="elevation">海拔 (m)</span>
-              <span className="speed">速度 (km/h)</span>
-              <span className="slope">坡度 (%)</span>
+          <nav className="map-tools surface" aria-label="地图工具">
+            <button className={`icon-button ${!measureMode ? 'is-active' : ''}`} aria-label="浏览地图" aria-pressed={!measureMode} title="浏览地图" onClick={selectBrowseMode}>
+              <IconTargetArrow size={18} />
+            </button>
+            <button className={`icon-button ${measureMode ? 'is-active' : ''}`} aria-label="测距模式" aria-pressed={measureMode} title="测距模式" onClick={toggleMeasureMode}>
+              <IconRulerMeasure size={18} />
+            </button>
+          </nav>
+
+          {measureMode && (
+            <div className="measurement-hint surface" role="status">
+              <IconRulerMeasure size={16} />
+              <span>{measurement.points < 2 ? (measurement.points ? '继续点击地图设置终点' : '点击地图设置起点') : `${measurement.distanceKm.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} km`}<small>{measurement.points > 1 ? `${measurement.points} 个测量点 · 地表距离` : '可连续添加测量点'}</small></span>
+              <button className="icon-button" aria-label="结束测距" title="结束测距" onClick={selectBrowseMode}><IconX size={15} /></button>
             </div>
-            <ResponsiveContainer
-              width="100%"
-              height="100%"
-              minWidth={0}
-              minHeight={0}
-              initialDimension={{ width: 800, height: 120 }}
+          )}
+
+          <div className="scene-clock"><IconSun size={14} />实时晨昏<span>{formatUtcTime(sceneTime)}</span></div>
+
+          <div className="layer-controls">
+            <div className="map-actions surface">
+              <button
+                className={`basemap-trigger ${basemapOpen ? 'is-active' : ''}`}
+                aria-expanded={basemapOpen}
+                aria-controls="basemap-panel"
+                onClick={() => setBasemapOpen((value) => !value)}
+              >
+                <IconStack2 size={17} />
+                <span className="basemap-current">{basemap.name}</span>
+                <span className="mobile-basemap-label">底图</span>
+                <IconChevronDown size={13} />
+              </button>
+              <span className="tool-divider" />
+              <button className="icon-button" aria-label="适配轨迹" title="适配轨迹" onClick={fitRoute} disabled={!activeTrack?.points.length}>
+                <IconZoomScan size={18} />
+              </button>
+            </div>
+            <aside
+              id="basemap-panel"
+              className={`basemap-panel surface ${basemapOpen ? 'is-open' : ''}`}
+              aria-label="底图与地形"
+              aria-hidden={!basemapOpen}
+              inert={!basemapOpen}
             >
-              <LineChart data={chartData} margin={{ top: 8, right: 16, left: 18, bottom: 8 }}>
-                <CartesianGrid stroke="#e8ece8" vertical={false} />
-                <XAxis dataKey="km" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} unit=" km" />
-                <YAxis yAxisId="left" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} width={42} />
-                <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} width={34} />
-                <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #dce3df', fontSize: 12 }} />
-                <ReferenceLine x={currentPoint?.distanceKm ? Number(currentPoint.distanceKm.toFixed(1)) : 0} stroke="#1f2937" yAxisId="left" />
-                <Line yAxisId="left" type="monotone" dataKey="elevation" stroke="#2f9c5c" strokeWidth={2.2} dot={false} isAnimationActive={false} />
-                <Line yAxisId="right" type="monotone" dataKey="speed" stroke="#3387df" strokeWidth={2} dot={false} isAnimationActive={false} />
-                <Line yAxisId="right" type="monotone" dataKey="slope" stroke="#f97316" strokeWidth={1.8} dot={false} isAnimationActive={false} />
-              </LineChart>
-            </ResponsiveContainer>
+              <div className="panel-title">
+                <span>底图与地形</span>
+                <button className="icon-button" aria-label="关闭底图面板" onClick={() => setBasemapOpen(false)}><IconX size={17} /></button>
+              </div>
+              <div className="basemap-list">
+                {basemaps.map((item) => (
+                  <button key={item.id} className={item.id === basemapId ? 'selected' : ''} aria-pressed={item.id === basemapId} onClick={() => setBasemapId(item.id)}>
+                    <span className="tile-chip" style={{ background: item.color }} />
+                    <span><strong>{item.name}</strong><small>{item.scope}</small></span>
+                    <span className="radio" />
+                  </button>
+                ))}
+              </div>
+              <label className="switch-line">
+                <span>三维地形<small>{hasCesiumIonToken ? '真实山地与地表起伏' : '当前使用标准地表'}</small></span>
+                <input type="checkbox" checked={terrainEnabled} onChange={(event) => setTerrainEnabled(event.target.checked)} />
+              </label>
+            </aside>
+          </div>
+
+          <div className="zoom-stack surface">
+            <button aria-label="放大" onClick={() => zoomMap('in')}><IconPlus size={18} /></button>
+            <button aria-label="缩小" onClick={() => zoomMap('out')}><IconMinus size={18} /></button>
+          </div>
+
+          {activeTrack?.points.length ? (
+            <PlaybackDock
+              track={activeTrack}
+              scrub={scrub}
+              isPlaying={isPlaying}
+              onPlay={() => setIsPlaying((value) => !value)}
+              onSeek={setScrubValue}
+              rangeRef={rangeInputRef}
+              profileOpen={profileOpen}
+              onToggleProfile={() => setProfileOpen((value) => !value)}
+            >
+              {profileOpen && (
+                <TrackProfile
+                  data={chartData}
+                  metric={profileMetric}
+                  onMetricChange={setProfileMetric}
+                  distance={currentPoint?.distanceKm ?? 0}
+                  onSeek={seekFromProfile}
+                  onClose={() => setProfileOpen(false)}
+                />
+              )}
+            </PlaybackDock>
+          ) : (
+            <div className="map-empty-hint surface">
+              <IconFileImport size={21} />
+              <span>导入轨迹，开始探索<small>支持拖放文件和粘贴日志文本</small></span>
+              <button className="command primary-command" onClick={() => fileInputRef.current?.click()}>导入日志</button>
+            </div>
+          )}
+
+          <div className="map-readout" aria-label="光标坐标与太阳时">
+            <span>{Math.abs(cursor.lat).toFixed(4)}° {cursor.lat < 0 ? 'S' : 'N'}&nbsp; {Math.abs(cursor.lon).toFixed(4)}° {cursor.lon < 0 ? 'W' : 'E'}</span>
+            <span className="readout-elevation">{Math.round(cursor.ele ?? 0)} m</span>
+            <span className="readout-solar">太阳时 {formatLocalSolarTime(sceneTime, cursor.lon)}</span>
+            <span className="readout-height">视高 {formatCameraHeight(cameraHeight)}</span>
           </div>
         </section>
-
-        <footer className="statusbar">
-          <span>WGS 84 / Cesium 3D</span>
-          <span>{status}</span>
-          <span>
-            <span className="scene-status-label">实时晨昏 · {formatUtcTime(sceneTime)} · </span>
-            视高 {formatCameraHeight(cameraHeight)}
-          </span>
-        </footer>
-      </section>
+      </div>
 
       <div
         className={`modal-backdrop ${pasteOpen ? 'is-open' : ''}`}
         role="dialog"
+        aria-labelledby="paste-title"
         aria-modal={pasteOpen ? 'true' : undefined}
         aria-hidden={!pasteOpen}
         inert={!pasteOpen}
+        onClick={(event) => { if (event.target === event.currentTarget) setPasteOpen(false); }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Tab') return;
+          const controls = event.currentTarget.querySelectorAll('button:not(:disabled), textarea');
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last?.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first?.focus();
+          }
+        }}
       >
         <div className="paste-modal">
           <div className="panel-title">
-            <span>粘贴日志文本</span>
-            <button onClick={() => setPasteOpen(false)} aria-label="关闭粘贴弹窗"><IconX size={18} /></button>
+            <span id="paste-title">粘贴日志文本</span>
+            <button className="icon-button" onClick={() => setPasteOpen(false)} aria-label="关闭粘贴弹窗"><IconX size={18} /></button>
           </div>
-          <textarea value={pasteText} onChange={(event) => setPasteText(event.target.value)} placeholder="在这里粘贴 CSV、GPX、KML 或 NMEA 文本..." />
+          <p>支持 CSV、GPX、KML、GeoJSON 和 NMEA，内容仅在本地解析。</p>
+          <textarea ref={pasteInputRef} aria-label="日志文本" value={pasteText} onChange={(event) => setPasteText(event.target.value)} placeholder="在这里粘贴轨迹日志…" />
+          <span className="paste-status" role="status">{status}</span>
           <div className="modal-actions">
-            <button className="secondary" onClick={() => setPasteOpen(false)}>取消</button>
-            <button onClick={handlePasteImport}>本地导入</button>
+            <button className="command" onClick={() => setPasteOpen(false)}>取消</button>
+            <button className="command primary-command" disabled={!pasteText.trim()} onClick={handlePasteImport}>导入轨迹</button>
           </div>
         </div>
       </div>
@@ -618,18 +653,12 @@ export default function App() {
         multiple
         accept=".gpx,.kml,.geojson,.json,.csv,.txt,.nmea,.log"
         className="hidden-file"
-        onChange={(event) => importFiles(event.target.files)}
+        onChange={(event) => {
+          importFiles(event.target.files);
+          event.target.value = '';
+        }}
       />
     </main>
-  );
-}
-
-function Metric({ label, value }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
   );
 }
 
