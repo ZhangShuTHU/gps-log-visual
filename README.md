@@ -8,8 +8,9 @@ Local-first GPS log visualization app inspired by GPS Visualizer.
 - Paste log text directly in the browser.
 - Render tracks on a CesiumJS 3D globe with Cesium World Terrain.
 - Use a collapsible track sidebar and a compact 64 px desktop / 60 px mobile playback bar.
-- Follow the real UTC sun position for automatic day/night and dawn/dusk shading at every longitude.
-- Switch between Cesium ion satellite/road imagery, Esri topographic tiles, and the built-in Natural Earth basemap.
+- Follow the real UTC sun position for day/night and dawn/dusk shading at every longitude. The effect is on by default; toggle it in map settings for an evenly lit map. The browser remembers the choice.
+- Render at the screen's native pixel density with finer map tiles and hardware antialiasing where supported.
+- Switch between high-resolution satellite imagery (Cesium ion or Esri), road maps (Cesium ion or OpenStreetMap), Esri topographic tiles, and the built-in Natural Earth overview.
 - Inspect distance, duration, speed, ascent, descent, and points in the sidebar. Expand elevation/speed/slope profiles on demand and click the chart to seek along the track.
 - Measure cumulative surface distance by clicking points on the map.
 - Export the active track as GPX, KML, CSV, or PNG.
@@ -35,7 +36,7 @@ For live Cesium ion imagery and terrain, add a local `.env.local` file:
 VITE_CESIUM_ION_TOKEN=your_scoped_cesium_ion_token
 ```
 
-Without a token, the app falls back to OpenStreetMap imagery and an ellipsoid surface.
+Without a token, satellite mode uses Esri World Imagery, road mode uses OpenStreetMap, and terrain uses an ellipsoid surface. Satellite imagery falls back to the bundled Natural Earth overview if the remote provider cannot initialize. Available satellite detail varies by location and source coverage.
 
 ## Checks
 

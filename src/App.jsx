@@ -29,6 +29,7 @@ import {
   hasCesiumIonToken,
   removeTrack,
   renderTrack,
+  setDayNightLighting,
   updateTrackCursor,
   useEllipsoidTerrain,
 } from './lib/cesium-map.js';
@@ -46,6 +47,7 @@ import {
 const colors = ['#1c7f48', '#f97316', '#1f8edb', '#d33b5f', '#7c3aed'];
 const PLAYBACK_STEP_MS = 260;
 const PLAYBACK_STATE_INTERVAL_MS = 100;
+const DAY_NIGHT_STORAGE_KEY = 'atlas-canvas:day-night-enabled';
 
 function buildDemoTracks() {
   return demoTracks.map((track) => makeTrackDocument(track));
@@ -77,6 +79,13 @@ export default function App() {
   const [sceneTime, setSceneTime] = useState(() => new Date());
   const [mapReady, setMapReady] = useState(false);
   const [terrainEnabled, setTerrainEnabled] = useState(true);
+  const [dayNightEnabled, setDayNightEnabled] = useState(() => {
+    try {
+      return window.localStorage.getItem(DAY_NIGHT_STORAGE_KEY) !== 'false';
+    } catch {
+      return true;
+    }
+  });
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const scrubRef = useRef(scrub);
@@ -145,20 +154,32 @@ export default function App() {
     if (!viewer || !mapReady) return;
     let cancelled = false;
 
-    createBasemapProvider(basemapId).then(({ provider, fallback }) => {
+    createBasemapProvider(basemapId).then(({ provider, fallback, fallbackName }) => {
       if (cancelled || viewer.isDestroyed()) return;
       viewer.imageryLayers.removeAll(true);
       viewer.imageryLayers.addImageryProvider(provider);
       viewer.scene.requestRender();
       setStatus(fallback
-        ? '已启用备用底图'
+        ? (fallbackName ? `影像暂不可用，已启用${fallbackName}` : '已启用备用底图')
         : `已启用${basemap.name}`);
+    }).catch(() => {
+      if (!cancelled && !viewer.isDestroyed()) setStatus('底图暂不可用，请切换其他底图');
     });
 
     return () => {
       cancelled = true;
     };
   }, [basemap, basemapId, mapReady]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(DAY_NIGHT_STORAGE_KEY, String(dayNightEnabled));
+    } catch {
+      // The switch still works when browser storage is unavailable.
+    }
+    const viewer = mapRef.current;
+    if (viewer && mapReady) setDayNightLighting(viewer, dayNightEnabled);
+  }, [dayNightEnabled, mapReady]);
 
   useEffect(() => {
     const viewer = mapRef.current;
@@ -519,7 +540,7 @@ export default function App() {
             </div>
           )}
 
-          <div className="scene-clock"><IconSun size={14} />实时晨昏<span>{formatUtcTime(sceneTime)}</span></div>
+          <div className="scene-clock"><IconSun size={14} />{dayNightEnabled ? '实时晨昏' : '全天明亮'}<span>{formatUtcTime(sceneTime)}</span></div>
 
           <div className="layer-controls">
             <div className="map-actions surface">
@@ -542,12 +563,12 @@ export default function App() {
             <aside
               id="basemap-panel"
               className={`basemap-panel surface ${basemapOpen ? 'is-open' : ''}`}
-              aria-label="底图与地形"
+              aria-label="地图设置"
               aria-hidden={!basemapOpen}
               inert={!basemapOpen}
             >
               <div className="panel-title">
-                <span>底图与地形</span>
+                <span>地图设置</span>
                 <button className="icon-button" aria-label="关闭底图面板" onClick={() => setBasemapOpen(false)}><IconX size={17} /></button>
               </div>
               <div className="basemap-list">
@@ -562,6 +583,17 @@ export default function App() {
               <label className="switch-line">
                 <span>三维地形<small>{hasCesiumIonToken ? '真实山地与地表起伏' : '当前使用标准地表'}</small></span>
                 <input type="checkbox" checked={terrainEnabled} onChange={(event) => setTerrainEnabled(event.target.checked)} />
+              </label>
+              <label className="switch-line">
+                <span>昼夜晨昏<small id="day-night-description">{dayNightEnabled ? '跟随太阳位置呈现昼夜变化' : '全天明亮，便于查看地图细节'}</small></span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label="昼夜晨昏"
+                  aria-describedby="day-night-description"
+                  checked={dayNightEnabled}
+                  onChange={(event) => setDayNightEnabled(event.target.checked)}
+                />
               </label>
             </aside>
           </div>

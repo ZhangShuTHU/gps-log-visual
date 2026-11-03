@@ -1,4 +1,5 @@
 import {
+  ArcGisMapServerImageryProvider,
   BoundingSphere,
   Cartesian3,
   Cartographic,
@@ -35,13 +36,13 @@ export const basemaps = [
   {
     id: 'satellite',
     name: '卫星影像',
-    scope: 'Cesium ion · 全球',
+    scope: hasCesiumIonToken ? 'Cesium ion · 高清影像' : 'Esri · 高清影像',
     color: 'linear-gradient(135deg, #132b2a, #53705c 52%, #a9865b)',
   },
   {
     id: 'road',
     name: '道路地图',
-    scope: 'Cesium ion · 全球',
+    scope: hasCesiumIonToken ? 'Cesium ion · 全球' : 'OpenStreetMap · 全球',
     color: 'linear-gradient(135deg, #dfe9df, #d2d7c5 52%, #8eb4cd)',
   },
   {
@@ -53,7 +54,7 @@ export const basemaps = [
   {
     id: 'natural-earth',
     name: '自然地球',
-    scope: 'Cesium 内置',
+    scope: 'Cesium 内置 · 全球概览',
     color: 'linear-gradient(135deg, #9dc5d4, #c8d59c 56%, #b68c62)',
   },
 ];
@@ -79,6 +80,7 @@ export function createCesiumViewer(container) {
     shouldAnimate: true,
     timeline: false,
     terrainProvider: new EllipsoidTerrainProvider(),
+    useBrowserRecommendedResolution: false,
     vrButton: false,
     contextOptions: {
       webgl: {
@@ -94,19 +96,19 @@ export function createCesiumViewer(container) {
 
   viewer.scene.globe.baseColor = Color.fromCssColorString('#dbe7df');
   viewer.scene.globe.depthTestAgainstTerrain = true;
-  viewer.scene.globe.enableLighting = true;
-  viewer.scene.globe.dynamicAtmosphereLighting = true;
-  viewer.scene.globe.dynamicAtmosphereLightingFromSun = true;
+  viewer.scene.globe.maximumScreenSpaceError = 1;
+  viewer.scene.globe.tileCacheSize = 256;
   viewer.scene.globe.lightingFadeOutDistance = 0;
   viewer.scene.globe.lightingFadeInDistance = 1;
   viewer.scene.globe.nightFadeOutDistance = 0;
   viewer.scene.globe.nightFadeInDistance = 1;
   viewer.scene.highDynamicRange = true;
-  viewer.scene.postProcessStages.fxaa.enabled = true;
+  // Prefer hardware antialiasing so the imagery's fine details stay sharp.
+  viewer.scene.postProcessStages.fxaa.enabled = !viewer.scene.msaaSupported;
   viewer.scene.skyAtmosphere.atmosphereLightIntensity = 10;
-  viewer.scene.atmosphere.dynamicLighting = DynamicAtmosphereLightingType.SUNLIGHT;
+  setDayNightLighting(viewer, true);
   viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
-  viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 1.5);
+  viewer.resolutionScale = 1;
   viewer.camera.setView({
     destination: Cartesian3.fromDegrees(18, 36, 12_500_000),
     orientation: {
@@ -119,29 +121,36 @@ export function createCesiumViewer(container) {
   return viewer;
 }
 
+export function setDayNightLighting(viewer, enabled) {
+  const { scene } = viewer;
+  scene.globe.enableLighting = enabled;
+  scene.globe.dynamicAtmosphereLighting = enabled;
+  scene.globe.dynamicAtmosphereLightingFromSun = enabled;
+  scene.atmosphere.dynamicLighting = enabled
+    ? DynamicAtmosphereLightingType.SUNLIGHT
+    : DynamicAtmosphereLightingType.NONE;
+  scene.requestRender();
+}
+
 export async function createBasemapProvider(id) {
-  try {
-    if (id === 'natural-earth') {
-      return {
-        provider: await TileMapServiceImageryProvider.fromUrl(
-          buildModuleUrl('Assets/Textures/NaturalEarthII'),
-        ),
-        fallback: false,
-      };
-    }
+  if (id === 'natural-earth') {
+    return { provider: await createNaturalEarthProvider(), fallback: false };
+  }
 
-    if (id === 'topographic') {
-      return {
-        provider: new UrlTemplateImageryProvider({
-          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
-          credit: 'Tiles © Esri — Esri, HERE, Garmin, OpenStreetMap contributors',
-          maximumLevel: 19,
-        }),
-        fallback: false,
-      };
-    }
+  if (id === 'topographic') {
+    return {
+      provider: new UrlTemplateImageryProvider({
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+        credit: 'Tiles © Esri — Esri, HERE, Garmin, OpenStreetMap contributors',
+        maximumLevel: 19,
+      }),
+      fallback: false,
+    };
+  }
 
-    if (hasCesiumIonToken) {
+  let fallback = false;
+  if (hasCesiumIonToken) {
+    try {
       const style = id === 'road'
         ? IonWorldImageryStyle.ROAD
         : IonWorldImageryStyle.AERIAL_WITH_LABELS;
@@ -149,12 +158,29 @@ export async function createBasemapProvider(id) {
         provider: await createWorldImageryAsync({ style }),
         fallback: false,
       };
+    } catch {
+      // A scoped or expired ion token should not leave the globe blank.
+      fallback = true;
     }
-  } catch {
-    // A scoped or expired ion token should not leave the globe blank.
   }
 
-  return { provider: createOpenStreetMapProvider(), fallback: true };
+  if (id === 'road') return { provider: createOpenStreetMapProvider(), fallback };
+
+  try {
+    return {
+      provider: await ArcGisMapServerImageryProvider.fromUrl(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer',
+        { enablePickFeatures: false },
+      ),
+      fallback,
+    };
+  } catch {
+    return {
+      provider: await createNaturalEarthProvider(),
+      fallback: true,
+      fallbackName: '自然地球',
+    };
+  }
 }
 
 let worldTerrainPromise;
@@ -345,6 +371,12 @@ function createOpenStreetMapProvider() {
     url: 'https://tile.openstreetmap.org/',
     credit: '© OpenStreetMap contributors',
   });
+}
+
+function createNaturalEarthProvider() {
+  return TileMapServiceImageryProvider.fromUrl(
+    buildModuleUrl('Assets/Textures/NaturalEarthII'),
+  );
 }
 
 function splitTrack(points, segmentCount) {
