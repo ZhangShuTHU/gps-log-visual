@@ -17,7 +17,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PlaybackDock from './components/PlaybackDock.jsx';
 import TrackProfile from './components/TrackProfile.jsx';
 import TrackSidebar from './components/TrackSidebar.jsx';
-import { demoTracks } from './data/demoTracks.js';
 import {
   attachDistanceMeasurement,
   attachMapTelemetry,
@@ -36,7 +35,6 @@ import {
 import { formatLocalSolarTime, formatUtcTime } from './lib/solar-time.js';
 import {
   interpolateTrackPoint,
-  makeTrackDocument,
   parseFile,
   parseText,
   toCsv,
@@ -48,23 +46,20 @@ const colors = ['#1c7f48', '#f97316', '#1f8edb', '#d33b5f', '#7c3aed'];
 const PLAYBACK_STEP_MS = 260;
 const PLAYBACK_STATE_INTERVAL_MS = 100;
 const DAY_NIGHT_STORAGE_KEY = 'atlas-canvas:day-night-enabled';
-
-function buildDemoTracks() {
-  return demoTracks.map((track) => makeTrackDocument(track));
-}
+const DOCKED_SIDEBAR_QUERY = '(min-width: 900px)';
 
 export default function App() {
   const mapNode = useRef(null);
   const mapRef = useRef(null);
-  const renderedTrackRef = useRef({ routeEntities: [], cursorEntity: null });
+  const renderedTrackRef = useRef(null);
   const lastFittedTrackIdRef = useRef(null);
   const fileInputRef = useRef(null);
   const pasteInputRef = useRef(null);
-  const [tracks, setTracks] = useState(buildDemoTracks);
-  const [activeId, setActiveId] = useState('trans-eurasia');
+  const [tracks, setTracks] = useState([]);
+  const [activeId, setActiveId] = useState(null);
   const [basemapId, setBasemapId] = useState('satellite');
   const [basemapOpen, setBasemapOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia('(min-width: 900px)').matches);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia(DOCKED_SIDEBAR_QUERY).matches);
   const [trackSearch, setTrackSearch] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileMetric, setProfileMetric] = useState('elevation');
@@ -290,7 +285,7 @@ export default function App() {
       setExportOpen(false);
       setBasemapOpen(false);
       setPasteOpen(false);
-      if (window.matchMedia('(max-width: 899px)').matches) setSidebarOpen(false);
+      if (!window.matchMedia(DOCKED_SIDEBAR_QUERY).matches) setSidebarOpen(false);
     }
     document.addEventListener('pointerdown', dismissPanels);
     document.addEventListener('keydown', handleEscape);
@@ -324,11 +319,8 @@ export default function App() {
     }
     if (parsedTracks.length) {
       setTracks((current) => [...parsedTracks, ...current]);
-      setActiveId(parsedTracks[0].id);
-      setIsPlaying(false);
-      setScrubValue(0);
+      selectTrack(parsedTracks[0]);
       setTrackSearch('');
-      setSidebarOpen(true);
       setStatus(`已本地导入 ${parsedTracks.length} 个文件`);
     }
   }
@@ -343,11 +335,8 @@ export default function App() {
       }
       parsed.color = colors[tracks.length % colors.length];
       setTracks((current) => [parsed, ...current]);
-      setActiveId(parsed.id);
-      setIsPlaying(false);
-      setScrubValue(0);
+      selectTrack(parsed);
       setTrackSearch('');
-      setSidebarOpen(true);
       setPasteText('');
       setPasteOpen(false);
       setStatus('粘贴日志已本地导入');
@@ -377,7 +366,7 @@ export default function App() {
     setExportOpen(false);
   }
 
-  function clearDemoTracks() {
+  function clearTracks() {
     setTracks([]);
     setActiveId(null);
     setIsPlaying(false);
@@ -415,6 +404,7 @@ export default function App() {
     setActiveId(track.id);
     setIsPlaying(false);
     setScrubValue(0);
+    setSidebarOpen(window.matchMedia(DOCKED_SIDEBAR_QUERY).matches);
   }
 
   function seekFromProfile(value) {
@@ -507,11 +497,11 @@ export default function App() {
           onImport={() => fileInputRef.current?.click()}
           onFiles={importFiles}
           onPaste={() => setPasteOpen(true)}
-          onClear={clearDemoTracks}
+          onClear={clearTracks}
           onClose={() => setSidebarOpen(false)}
           onProfile={() => {
             setProfileOpen(true);
-            if (window.matchMedia('(max-width: 899px)').matches) setSidebarOpen(false);
+            if (!window.matchMedia(DOCKED_SIDEBAR_QUERY).matches) setSidebarOpen(false);
           }}
           status={status}
         />

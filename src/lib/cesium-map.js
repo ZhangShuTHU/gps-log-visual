@@ -14,7 +14,7 @@ import {
   JulianDate,
   Math as CesiumMath,
   OpenStreetMapImageryProvider,
-  PolylineGlowMaterialProperty,
+  PolylineOutlineMaterialProperty,
   SceneMode,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -28,7 +28,7 @@ import {
 import { haversineKm } from './track.js';
 
 const ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN?.trim() ?? '';
-const routeColors = ['#2673d9', '#1c9ed8', '#20a566', '#d4a011', '#e24a2e'];
+const routeOutlineColor = Color.fromCssColorString('#14202b');
 
 export const hasCesiumIonToken = Boolean(ionToken);
 
@@ -200,50 +200,46 @@ export function useEllipsoidTerrain(viewer) {
 }
 
 export function renderTrack(viewer, track) {
-  if (!track?.points.length) return { routeEntities: [], cursorEntity: null };
+  if (!track?.points.length) return { routeEntity: null, cursorEntity: null };
 
-  const segments = splitTrack(track.points, routeColors.length);
-  const routeEntities = segments.map((points, index) => {
-    const color = Color.fromCssColorString(routeColors[index]);
-    return viewer.entities.add({
-      id: `active-route-${index}`,
-      polyline: {
-        positions: points.map((point) => Cartesian3.fromDegrees(point.lon, point.lat)),
-        width: 6,
-        clampToGround: true,
-        material: new PolylineGlowMaterialProperty({
-          color,
-          glowPower: 0.16,
-          taperPower: 0.35,
-        }),
-        depthFailMaterial: color.withAlpha(0.72),
-      },
-    });
-  });
+  const positions = track.points.map((point) => Cartesian3.fromDegrees(point.lon, point.lat));
+  const routeEntity = positions.length > 1 ? viewer.entities.add({
+    id: 'active-route',
+    polyline: {
+      positions,
+      width: 10,
+      clampToGround: true,
+      material: new PolylineOutlineMaterialProperty({
+        color: Color.fromCssColorString('#ffd54a'),
+        outlineColor: routeOutlineColor,
+        outlineWidth: 4,
+      }),
+    },
+  }) : null;
 
-  const firstPoint = track.points[0];
   const cursorEntity = viewer.entities.add({
     id: 'active-route-cursor',
-    position: Cartesian3.fromDegrees(firstPoint.lon, firstPoint.lat),
+    position: positions[0],
     point: {
-      pixelSize: 11,
+      pixelSize: 14,
       color: Color.WHITE,
-      outlineColor: Color.fromCssColorString('#0f5132'),
-      outlineWidth: 4,
+      outlineColor: routeOutlineColor,
+      outlineWidth: 3,
       heightReference: HeightReference.CLAMP_TO_GROUND,
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
   });
 
   viewer.scene.requestRender();
-  return { routeEntities, cursorEntity };
+  return { routeEntity, cursorEntity };
 }
 
 export function removeTrack(viewer, renderedTrack) {
-  for (const entity of renderedTrack?.routeEntities ?? []) {
-    viewer.entities.remove(entity);
+  if (!renderedTrack) return;
+  if (renderedTrack.routeEntity) {
+    viewer.entities.remove(renderedTrack.routeEntity);
   }
-  if (renderedTrack?.cursorEntity) {
+  if (renderedTrack.cursorEntity) {
     viewer.entities.remove(renderedTrack.cursorEntity);
   }
   viewer.scene.requestRender();
@@ -264,7 +260,14 @@ export function flyToTrack(viewer, track, duration = 0.9) {
   const verticalTangent = Math.tan(frustum.fovy * 0.5);
   const horizontalTangent = frustum.aspectRatio * verticalTangent;
   const fitRange = sphere.radius / Math.min(verticalTangent, horizontalTangent);
-  const range = Math.max(24_000, sphere.radius * 2.65, fitRange * 1.25);
+  const range = Math.max(450, sphere.radius * 2.65, fitRange * 1.25);
+
+  const center = Cartographic.fromCartesian(sphere.center);
+  const groundHeight = center && viewer.scene.globe.getHeight(center);
+  // Coarse globe tiles can report large negative heights before finer geometry loads.
+  if (groundHeight > 0) {
+    sphere.center = Cartesian3.fromRadians(center.longitude, center.latitude, center.height + groundHeight);
+  }
 
   viewer.camera.flyToBoundingSphere(sphere, {
     duration,
@@ -377,23 +380,4 @@ function createNaturalEarthProvider() {
   return TileMapServiceImageryProvider.fromUrl(
     buildModuleUrl('Assets/Textures/NaturalEarthII'),
   );
-}
-
-function splitTrack(points, segmentCount) {
-  if (points.length < 2) return points.length ? [points] : [];
-
-  const segments = [];
-  const lastIndex = points.length - 1;
-  const resolvedSegmentCount = Math.min(segmentCount, lastIndex);
-
-  for (let index = 0; index < resolvedSegmentCount; index += 1) {
-    const start = Math.floor((index / resolvedSegmentCount) * lastIndex);
-    const end = index === resolvedSegmentCount - 1
-      ? lastIndex
-      : Math.max(start + 1, Math.ceil(((index + 1) / resolvedSegmentCount) * lastIndex));
-    const segment = points.slice(start, end + 1);
-    if (segment.length >= 2) segments.push(segment);
-  }
-
-  return segments;
 }

@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ArcGisMapServerImageryProvider,
+  Cartographic,
   DynamicAtmosphereLightingType,
+  EntityCollection,
   OpenStreetMapImageryProvider,
+  PolylineOutlineMaterialProperty,
   TileMapServiceImageryProvider,
   Viewer,
   createWorldImageryAsync,
 } from 'cesium';
-import { createBasemapProvider, createCesiumViewer, setDayNightLighting } from './cesium-map.js';
+import { createBasemapProvider, createCesiumViewer, flyToTrack, removeTrack, renderTrack, setDayNightLighting } from './cesium-map.js';
 
 vi.mock('cesium', async (importOriginal) => ({
   ...await importOriginal(),
@@ -91,6 +94,59 @@ describe('map clarity', () => {
 
     createCesiumViewer({});
     expect(viewer.scene.postProcessStages.fxaa.enabled).toBe(true);
+  });
+});
+
+describe('track visibility', () => {
+  const points = [
+    { lon: 121.49566, lat: 31.23972 },
+    { lon: 121.4968, lat: 31.24054 },
+    { lon: 121.4981, lat: 31.2417 },
+  ];
+
+  it('draws the full track as one outlined ground line and removes it with the cursor', () => {
+    const viewer = makeViewer();
+    viewer.entities = new EntityCollection();
+
+    const rendered = renderTrack(viewer, { points });
+    const { polyline } = rendered.routeEntity;
+    expect(viewer.entities.values).toEqual([rendered.routeEntity, rendered.cursorEntity]);
+    expect(polyline.positions.getValue()).toHaveLength(points.length);
+    expect(polyline.clampToGround.getValue()).toBe(true);
+    expect(polyline.width.getValue()).toBeGreaterThan(6);
+    expect(polyline.material).toBeInstanceOf(PolylineOutlineMaterialProperty);
+
+    removeTrack(viewer, rendered);
+    expect(viewer.entities.values).toHaveLength(0);
+  });
+
+  it('draws only a cursor for a single point and no entities for an empty workspace', () => {
+    const viewer = makeViewer();
+    viewer.entities = new EntityCollection();
+
+    renderTrack(viewer, undefined);
+    expect(viewer.entities.values).toHaveLength(0);
+
+    const rendered = renderTrack(viewer, { points: points.slice(0, 1) });
+    expect(rendered.routeEntity).toBeNull();
+    expect(viewer.entities.values).toEqual([rendered.cursorEntity]);
+  });
+
+  it.each([
+    { groundHeight: 2300, centerHeight: 2300 },
+    { groundHeight: -3700, centerHeight: 0 },
+  ])('fits a short track above a terrain sample of $groundHeight m', ({ groundHeight, centerHeight }) => {
+    const viewer = makeViewer();
+    viewer.resize = vi.fn();
+    viewer.camera.frustum = { fovy: Math.PI / 3, aspectRatio: 1.5 };
+    viewer.camera.flyToBoundingSphere = vi.fn();
+    viewer.scene.globe.getHeight = vi.fn(() => groundHeight);
+
+    flyToTrack(viewer, { points });
+
+    const [[sphere, { offset }]] = viewer.camera.flyToBoundingSphere.mock.calls;
+    expect(offset.range).toBeLessThan(1_000);
+    expect(Cartographic.fromCartesian(sphere.center).height).toBeCloseTo(centerHeight, 0);
   });
 });
 

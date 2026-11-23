@@ -4,9 +4,9 @@ Local-first GPS log visualization app inspired by GPS Visualizer.
 
 ## Features
 
-- Import local GPX, KML, GeoJSON, CSV, TXT, and NMEA files.
+- Start with an empty track workspace and import local GPX, KML, GeoJSON, CSV, TXT, and NMEA files.
 - Paste log text directly in the browser.
-- Render tracks on a CesiumJS 3D globe with Cesium World Terrain.
+- Fit imported tracks in the CesiumJS 3D view and draw them on the terrain with a high-contrast outline.
 - Use a collapsible track sidebar and a compact 64 px desktop / 60 px mobile playback bar.
 - Follow the real UTC sun position for day/night and dawn/dusk shading at every longitude. The effect is on by default; toggle it in map settings for an evenly lit map. The browser remembers the choice.
 - Render at the screen's native pixel density with finer map tiles and hardware antialiasing where supported.
